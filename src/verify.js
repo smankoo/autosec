@@ -3,9 +3,9 @@ import { spawn } from 'node:child_process';
 /**
  * Run `npm test` in repoDir. Returns { pass, output (last ~200 lines), code }.
  */
-export function verify(repoDir, { timeoutMs = 5 * 60 * 1000 } = {}) {
+export function verify(repoDir, { timeoutMs = 5 * 60 * 1000, env } = {}) {
   return new Promise((resolve) => {
-    const child = spawn('npm', ['test', '--silent'], { cwd: repoDir, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('npm', ['test', '--silent'], { cwd: repoDir, env: env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let buf = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
