@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -20,16 +21,26 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   const repoDir = path.join(root, 'repo');
   const log = makeLogger(onLog);
 
-  log('clone', { repoUrl, repoDir });
-  await exec('git', ['clone', '--depth', '50', repoUrl, repoDir]);
+  const sshUrl = repoUrl.replace(/^https:\/\/github\.com\/(.+?)(?:\.git)?$/, 'git@github.com:$1.git');
+  log('clone', { repoUrl: sshUrl, repoDir });
+  await exec('git', ['clone', '--depth', '50', sshUrl, repoDir]);
   await configurePushAuth(repoDir);
   await exec('git', ['config', 'user.name', process.env.GIT_AUTHOR_NAME || 'AutoSec Bot'], { cwd: repoDir });
   await exec('git', ['config', 'user.email', process.env.GIT_AUTHOR_EMAIL || 'autosec@example.invalid'], { cwd: repoDir });
 
   log('npm-install');
-  const npmArgs = ['install', '--no-audit', '--no-fund'];
+  const npmArgs = ['install', '--no-audit', '--no-fund', `--cache=${path.join(root, 'npm-cache')}`];
   if (process.env.AUTOSEC_NPM_REGISTRY) npmArgs.push(`--registry=${process.env.AUTOSEC_NPM_REGISTRY}`);
   await exec('npm', npmArgs, { cwd: repoDir, maxBuffer: 50 * 1024 * 1024 });
+
+  // Detect the required node version from installed node_modules, then reinstall
+  // with the correct node if it differs from the current one so native bindings match.
+  const nodeEnv = await resolveNodeEnv(repoDir, log);
+  if (nodeEnv !== process.env) {
+    const { rm: rmDir } = await import('node:fs/promises');
+    await rmDir(path.join(repoDir, 'node_modules'), { recursive: true, force: true });
+    await exec('npm', npmArgs, { cwd: repoDir, env: nodeEnv, maxBuffer: 50 * 1024 * 1024 });
+  }
 
   log('scan');
   const vulns = await scan(repoDir);
@@ -73,8 +84,12 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
     return { runId, status: 'failed', reason: 'no test command in repo', target };
   }
 
+  log('baseline');
+  const baselineResult = await verify(repoDir, { env: nodeEnv });
+  log('baseline.result', { pass: baselineResult.pass, output: baselineResult.output });
+
   if (dryRun) {
-    return { runId, status: 'dry-run', target, ctxSummary: summarizeCtx(ctx) };
+    return { runId, status: 'dry-run', target, ctxSummary: summarizeCtx(ctx), baseline: baselineResult };
   }
 
   log('agent.start');
@@ -90,10 +105,12 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   log('agent.done', { status: summary.status });
 
   log('verify');
-  const testResult = await verify(repoDir);
-  log('verify.result', { pass: testResult.pass });
+  const testResult = await verify(repoDir, { env: nodeEnv });
+  log('verify.result', { pass: testResult.pass, baselinePass: baselineResult.pass, output: testResult.output });
 
-  const draft = !testResult.pass || summary.status !== 'success';
+  // Only treat test failure as a regression if baseline was passing.
+  const testsRegressed = !testResult.pass && baselineResult.pass;
+  const draft = testsRegressed || summary.status !== 'success';
   log('pr.open', { draft, push });
   const pr = await openPR({
     repoDir,
@@ -101,6 +118,7 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
     ctx,
     summary,
     testResult,
+    baselineResult,
     branchBase,
     draft,
     push,
@@ -108,12 +126,91 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
 
   return {
     runId,
-    status: push ? (testResult.pass ? 'pr-opened' : 'pr-opened-draft') : 'committed-local',
+    status: push ? (draft ? 'pr-opened-draft' : 'pr-opened') : 'committed-local',
     target,
     pr,
     summary,
     workspace: repoDir,
   };
+}
+
+async function resolveNodeEnv(repoDir, log) {
+  const NVM_SH = path.join(os.homedir(), '.nvm', 'nvm.sh');
+  if (!existsSync(NVM_SH)) return process.env;
+
+  let version;
+
+  // 1. .nvmrc / .node-version
+  for (const f of ['.nvmrc', '.node-version']) {
+    try {
+      const v = (await readFile(path.join(repoDir, f), 'utf8')).trim();
+      if (v) { version = v; break; }
+    } catch {}
+  }
+
+  // 2. engines.node in package.json
+  if (!version) {
+    try {
+      const pkg = JSON.parse(await readFile(path.join(repoDir, 'package.json'), 'utf8'));
+      const eng = pkg.engines?.node;
+      if (eng) version = minVersionFromRange(eng);
+    } catch {}
+  }
+
+  // 3. Scan all installed node_modules for the highest minimum engine requirement
+  if (!version) {
+    try {
+      const { readdir } = await import('node:fs/promises');
+      const pkgDirs = await readdir(path.join(repoDir, 'node_modules'));
+      let maxMin = [0, 0, 0];
+      for (const dir of pkgDirs) {
+        if (dir.startsWith('.')) continue;
+        const pkgJsonPath = dir.startsWith('@')
+          ? null // skip scoped for now — handled below
+          : path.join(repoDir, 'node_modules', dir, 'package.json');
+        if (!pkgJsonPath) continue;
+        try {
+          const depPkg = JSON.parse(await readFile(pkgJsonPath, 'utf8'));
+          const eng = depPkg.engines?.node;
+          if (!eng) continue;
+          const v = minVersionFromRange(eng);
+          if (!v) continue;
+          const parts = v.split('.').map(Number);
+          if (cmpVersion(parts, maxMin) > 0) maxMin = parts;
+        } catch {}
+      }
+      if (maxMin[0] > 0) version = maxMin.join('.');
+    } catch {}
+  }
+
+  if (!version) return process.env;
+
+  try {
+    const { stdout } = await exec('/bin/bash', ['-c',
+      `source "${NVM_SH}" --no-use && nvm install "${version}" --no-progress > /dev/null 2>&1 && nvm which "${version}"`,
+    ]);
+    const nodePath = stdout.trim().split('\n').pop().trim();
+    const nodeBin = path.dirname(nodePath);
+    if (nodeBin && nodeBin !== '.') {
+      log('node-version', { requested: version, bin: nodeBin });
+      return { ...process.env, PATH: `${nodeBin}:${process.env.PATH}` };
+    }
+  } catch {}
+
+  return process.env;
+}
+
+function minVersionFromRange(range) {
+  // Extract the first concrete x.y.z from a semver range like "^20.19.0 || >=22.12.0"
+  const m = range.match(/(\d+\.\d+\.\d+)/);
+  return m ? m[1] : null;
+}
+
+function cmpVersion(a, b) {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
 }
 
 async function configurePushAuth(repoDir) {

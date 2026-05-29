@@ -1,19 +1,25 @@
 import express from 'express';
 import path from 'node:path';
+import os from 'node:os';
 import { spawn } from 'node:child_process';
+import { mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { run as runOrchestrator } from './orchestrator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(__dirname, '..', 'web');
+const RUNS_DIR = path.join(os.homedir(), '.autosec', 'runs');
 
 // In-memory run registry. For a real product this becomes Redis / DB.
 const runs = new Map(); // runId -> { events: [], subscribers: Set, status, result, error }
 
 function newRun() {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const dir = path.join(RUNS_DIR, id);
+  mkdir(dir, { recursive: true }).catch(() => {});
   const r = {
     id,
+    dir,
     events: [],
     subscribers: new Set(),
     status: 'pending',
@@ -31,10 +37,59 @@ function pushEvent(run, evt) {
   run.events.push(evt);
   if (evt.stage === 'agent.chunk' && evt.data?.text) {
     run.chatAgentTranscript += evt.data.text;
+    appendFile(path.join(run.dir, 'agent.txt'), evt.data.text).catch(() => {});
+  } else if (evt.stage === 'baseline.result') {
+    if (evt.data?.output != null) {
+      writeFile(path.join(run.dir, 'baseline.txt'), evt.data.output).catch(() => {});
+    }
+  } else if (evt.stage === 'verify.result') {
+    if (evt.data?.output != null) {
+      writeFile(path.join(run.dir, 'verify.txt'), evt.data.output).catch(() => {});
+    }
+  } else if (evt.stage === 'scan.result') {
+    writeFile(path.join(run.dir, 'scan.json'), JSON.stringify(evt.data, null, 2)).catch(() => {});
+  } else if (evt.stage === 'error') {
+    appendFile(path.join(run.dir, 'error.txt'), `[${evt.ts}] ${evt.data?.message || 'unknown error'}\n`).catch(() => {});
   }
   for (const sub of run.subscribers) {
     try { sub(evt); } catch {}
   }
+}
+
+function writeManifest(run) {
+  // Exclude agent.chunk events — content is in agent.txt
+  const events = run.events.filter((e) => e.stage !== 'agent.chunk');
+  const manifest = {
+    id: run.id,
+    status: run.status,
+    startedAt: run.startedAt,
+    finishedAt: Date.now(),
+    error: run.error || null,
+    result: run.result || null,
+    events,
+  };
+  writeFile(path.join(run.dir, 'manifest.json'), JSON.stringify(manifest, null, 2)).catch(() => {});
+  // Write a human-readable summary alongside
+  const lines = [`AutoSec run ${run.id}`, `Status: ${run.status}`, `Started: ${new Date(run.startedAt).toISOString()}`, `Finished: ${new Date(manifest.finishedAt).toISOString()}`];
+  if (run.error) lines.push(`Error: ${run.error}`);
+  const queued = events.find((e) => e.stage === 'queued');
+  if (queued?.data) lines.push(`Repo: ${queued.data.repoUrl}`, `Dry run: ${queued.data.dryRun}`);
+  const scan = events.find((e) => e.stage === 'scan.result');
+  if (scan?.data) lines.push(``, `Vulnerabilities found: ${scan.data.count}`, ...(scan.data.vulns || []).map((v) => `  ${v.package} (${v.severity}) ${v.current || '?'} -> ${v.fixed}${v.isMajorBump ? ' [major]' : ''}`));
+  const target = events.find((e) => e.stage === 'target');
+  if (target?.data) lines.push(``, `Target: ${target.data.package} ${target.data.current || '?'} -> ${target.data.fixed} (${target.data.severity})`);
+  const baseline = events.find((e) => e.stage === 'baseline.result');
+  if (baseline?.data) lines.push(`Baseline tests: ${baseline.data.pass ? 'PASSED' : 'FAILED'}`);
+  const verify = events.find((e) => e.stage === 'verify.result');
+  if (verify?.data) {
+    const note = !verify.data.pass ? (verify.data.baselinePass ? 'FAILED (regression)' : 'FAILED (pre-existing)') : 'PASSED';
+    lines.push(`Post-fix tests: ${note}`);
+  }
+  if (run.result?.pr?.branch) lines.push(`Branch: ${run.result.pr.branch}`);
+  if (run.result?.pr?.url) lines.push(`PR: ${run.result.pr.url}`);
+  if (run.result?.summary?.migration_notes) lines.push(``, `Agent notes:`, run.result.summary.migration_notes);
+  lines.push(``, `Artifacts: ${run.dir}`);
+  writeFile(path.join(run.dir, 'summary.txt'), lines.join('\n') + '\n').catch(() => {});
 }
 
 function buildRunContext(run) {
@@ -90,11 +145,22 @@ function buildRunContext(run) {
     lines.push('');
   }
 
-  // Verify
+  // Baseline + verify
+  const baselineEvt = run.events.find((e) => e.stage === 'baseline.result');
   const verifyEvt = run.events.find((e) => e.stage === 'verify.result');
-  if (verifyEvt?.data) {
-    lines.push(`## Independent test verification`);
-    lines.push(`- Pass: ${verifyEvt.data.pass}`);
+  if (baselineEvt?.data || verifyEvt?.data) {
+    lines.push(`## Test results`);
+    if (baselineEvt?.data) {
+      lines.push(`- Baseline (pre-fix): ${baselineEvt.data.pass ? 'PASSED' : 'FAILED'}`);
+    }
+    if (verifyEvt?.data) {
+      const baselinePassed = baselineEvt?.data?.pass ?? true;
+      const postFixPassed = verifyEvt.data.pass;
+      const note = !postFixPassed
+        ? (baselinePassed ? 'FAILED (regression)' : 'FAILED (pre-existing)')
+        : 'PASSED';
+      lines.push(`- Post-fix: ${note}`);
+    }
     lines.push('');
   }
 
@@ -229,11 +295,13 @@ export function createApp() {
         run.status = 'done';
         run.result = result;
         pushEvent(run, { ts: new Date().toISOString(), stage: 'done', data: { status: result.status } });
+        writeManifest(run);
       })
       .catch((err) => {
         run.status = 'error';
         run.error = err.message;
         pushEvent(run, { ts: new Date().toISOString(), stage: 'error', data: { message: err.message } });
+        writeManifest(run);
       });
 
     res.status(202).json({ runId: run.id });
