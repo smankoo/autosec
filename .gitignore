@@ -1,0 +1,28 @@
+# Deps
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+.aws/
+secrets.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# AutoSec runtime artifacts
+/tmp/autosec-runs/
+*.log
+.autosec-cache/
