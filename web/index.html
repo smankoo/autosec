@@ -19,13 +19,15 @@
   </style>
 </head>
 <body class="min-h-screen">
-  <div class="max-w-4xl mx-auto px-6 py-10">
+  <div class="max-w-7xl mx-auto px-6 py-10">
     <header class="mb-8 flex items-baseline gap-3">
       <h1 class="text-3xl font-semibold tracking-tight">AutoSec</h1>
       <span class="text-sm text-slate-400">autonomous dependency vulnerability remediation</span>
       <span class="ml-auto text-xs text-slate-500 mono">UI runs are commit-local · push via CLI</span>
     </header>
 
+    <div class="grid grid-cols-1 lg:grid-cols-12 lg:gap-6">
+    <main class="lg:col-span-8 min-w-0 space-y-6">
     <section class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-lg">
       <form id="run-form" class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
         <div class="md:col-span-7">
@@ -74,28 +76,6 @@
 
       <ol id="timeline" class="space-y-3"></ol>
 
-      <!-- ===== Chat ===== -->
-      <div id="chat-section" class="mt-6 border-t border-slate-800 pt-5">
-        <div class="flex items-center gap-2 mb-3">
-          <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-          <h3 class="text-sm font-medium text-slate-200">Ask about this run</h3>
-          <span class="ml-auto text-[11px] text-slate-500">grounded in this run's events, transcript, and result</span>
-        </div>
-        <div id="chat-messages" class="bg-slate-950 border border-slate-800 rounded-lg p-3 max-h-[50vh] overflow-y-auto space-y-3 text-sm"></div>
-        <div class="mt-3">
-          <div id="chat-suggestions" class="flex flex-wrap gap-1.5 mb-2"></div>
-          <form id="chat-form" class="flex gap-2">
-            <input id="chat-input" type="text" autocomplete="off"
-              placeholder="e.g. Why did the agent pick this version? What broke?"
-              class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            <button id="chat-send" type="submit"
-              class="bg-indigo-500 hover:bg-indigo-400 disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition">
-              Ask
-            </button>
-          </form>
-        </div>
-      </div>
-
       <details class="mt-6 group">
         <summary class="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center gap-2">
           <svg class="chev w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
@@ -116,7 +96,44 @@
     <footer class="mt-10 text-center text-xs text-slate-500">
       AutoSec · CLI: <code class="mono">./bin/autosec.js run &lt;url&gt; --target &lt;pkg&gt;</code>
     </footer>
+    </main>
+
+    <!-- ===== Chat (side panel on lg+, fixed slide-in drawer on small) ===== -->
+    <aside id="chat-aside" class="hidden lg:block lg:col-span-4">
+      <div class="lg:sticky lg:top-6">
+        <div id="chat-section" class="bg-slate-900 border border-slate-800 rounded-2xl flex flex-col h-[calc(100vh-6rem)]">
+          <div class="flex items-center gap-2 px-5 py-3 border-b border-slate-800 shrink-0">
+            <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+            <h3 class="text-sm font-medium text-slate-200">Ask about this run</h3>
+            <button id="chat-close" type="button" class="lg:hidden ml-auto text-slate-400 hover:text-slate-100" aria-label="close">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-3 space-y-3 text-sm"></div>
+          <div class="px-4 py-3 border-t border-slate-800 shrink-0">
+            <div id="chat-suggestions" class="flex flex-wrap gap-1.5 mb-2"></div>
+            <form id="chat-form" class="flex gap-2">
+              <input id="chat-input" type="text" autocomplete="off"
+                placeholder="Ask about this run…"
+                class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-0" />
+              <button id="chat-send" type="submit"
+                class="bg-indigo-500 hover:bg-indigo-400 disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition shrink-0">
+                Ask
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </aside>
+    </div>
   </div>
+
+  <!-- Floating chat toggle for narrow screens -->
+  <button id="chat-fab" type="button"
+    class="lg:hidden fixed bottom-5 right-5 z-40 bg-indigo-500 hover:bg-indigo-400 text-white rounded-full p-4 shadow-lg shadow-indigo-500/30"
+    aria-label="open chat">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+  </button>
 
   <script>
     // -------- icons --------
@@ -723,6 +740,32 @@
 
     // Initial render of suggestions
     renderSuggestions();
+
+    // -------- mobile drawer toggle --------
+    const chatAside = document.getElementById('chat-aside');
+    const chatFab = document.getElementById('chat-fab');
+    const chatClose = document.getElementById('chat-close');
+    const MOBILE_DRAWER_CLASSES = ['fixed','inset-y-0','right-0','z-40','w-full','sm:w-[420px]','bg-slate-950','shadow-2xl','p-4'];
+
+    function openMobileChat() {
+      chatAside.classList.remove('hidden');
+      MOBILE_DRAWER_CLASSES.forEach(c => chatAside.classList.add(c));
+    }
+    function closeMobileChat() {
+      MOBILE_DRAWER_CLASSES.forEach(c => chatAside.classList.remove(c));
+      if (window.innerWidth < 1024) chatAside.classList.add('hidden');
+    }
+    chatFab.addEventListener('click', openMobileChat);
+    chatClose.addEventListener('click', closeMobileChat);
+    window.addEventListener('resize', () => {
+      // Reset state when crossing the lg breakpoint
+      if (window.innerWidth >= 1024) {
+        MOBILE_DRAWER_CLASSES.forEach(c => chatAside.classList.remove(c));
+        chatAside.classList.remove('hidden');
+      } else if (!chatAside.classList.contains('fixed')) {
+        chatAside.classList.add('hidden');
+      }
+    });
   </script>
 </body>
 </html>
