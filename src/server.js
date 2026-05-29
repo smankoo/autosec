@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { run as runOrchestrator } from './orchestrator.js';
+import { runRecovery } from './recovery.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(__dirname, '..', 'web');
@@ -228,6 +229,17 @@ function buildChatPrompt(run, userMessage) {
   ].filter(Boolean).join('\n');
 }
 
+function inferFailedStage(events) {
+  // The last non-error event before the error is the stage that was running.
+  const ORDER = ['clone', 'npm-install', 'scan', 'triage', 'context', 'baseline', 'agent.start', 'verify', 'pr.open'];
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.stage === 'error' || e.stage === 'agent.chunk') continue;
+    if (ORDER.includes(e.stage)) return e.stage;
+  }
+  return null;
+}
+
 function chatWithClaude(prompt, { onChunk, timeoutMs = 90_000 }) {
   return new Promise((resolve, reject) => {
     const child = spawn('claude', ['-p', prompt, '--max-turns', '1'], {
@@ -297,10 +309,28 @@ export function createApp() {
         pushEvent(run, { ts: new Date().toISOString(), stage: 'done', data: { status: result.status } });
         writeManifest(run);
       })
-      .catch((err) => {
+      .catch(async (err) => {
         run.status = 'error';
         run.error = err.message;
         pushEvent(run, { ts: new Date().toISOString(), stage: 'error', data: { message: err.message } });
+
+        // Self-diagnosis: spawn a Claude agent against AutoSec's own source to propose a patch.
+        const failedStage = inferFailedStage(run.events);
+        pushEvent(run, { ts: new Date().toISOString(), stage: 'recovery.start', data: { failedStage } });
+        try {
+          const { proposal } = await runRecovery({
+            failedStage,
+            errorMessage: err.message,
+            runEvents: run.events,
+            onChunk: (text) => {
+              pushEvent(run, { ts: new Date().toISOString(), stage: 'recovery.chunk', data: { text } });
+            },
+          });
+          pushEvent(run, { ts: new Date().toISOString(), stage: 'recovery.done', data: { proposal } });
+          run.recoveryProposal = proposal;
+        } catch (recErr) {
+          pushEvent(run, { ts: new Date().toISOString(), stage: 'recovery.error', data: { message: recErr.message } });
+        }
         writeManifest(run);
       });
 

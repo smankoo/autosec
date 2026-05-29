@@ -1,150 +1,419 @@
 <!doctype html>
-<html lang="en" class="bg-slate-950 text-slate-100">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AutoSec</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Geist', 'ui-sans-serif', 'system-ui'],
+            mono: ['"Geist Mono"', 'ui-monospace', 'monospace'],
+            serif: ['"Instrument Serif"', 'ui-serif', 'Georgia'],
+          },
+          colors: {
+            ink: {
+              50:  '#f8f8f7',
+              100: '#f1f1ef',
+              200: '#e6e6e3',
+              300: '#d2d2cf',
+              400: '#9b9b97',
+              500: '#6b6b67',
+              600: '#4a4a47',
+              700: '#2f2f2d',
+              800: '#1a1a19',
+              900: '#0c0c0b',
+            },
+            accent: {
+              50:  '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            },
+          },
+        },
+      },
+    };
+  </script>
   <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .step-enter { animation: stepIn 250ms ease-out; }
-    @keyframes stepIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    :root {
+      --bg: #fafaf9;
+      --grid: rgba(15, 23, 42, 0.04);
+    }
+    html, body {
+      background: var(--bg);
+      color: #0c0c0b;
+      font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+      font-feature-settings: "ss01", "cv11";
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      letter-spacing: -0.01em;
+    }
+    body {
+      min-height: 100vh;
+      background-image:
+        radial-gradient(1200px 600px at 85% -10%, rgba(99, 102, 241, 0.08), transparent 60%),
+        radial-gradient(900px 500px at -10% 10%, rgba(236, 72, 153, 0.05), transparent 55%),
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: auto, auto, 32px 32px, 32px 32px;
+      background-position: 0 0, 0 0, -1px -1px, -1px -1px;
+    }
+    .mono { font-family: 'Geist Mono', ui-monospace, monospace; font-feature-settings: "ss01"; }
+    .serif-italic { font-family: 'Instrument Serif', serif; font-style: italic; font-weight: 400; letter-spacing: -0.02em; }
+
+    /* card with subtle layered shadow */
+    .card {
+      background: rgba(255,255,255,0.72);
+      backdrop-filter: saturate(140%) blur(8px);
+      -webkit-backdrop-filter: saturate(140%) blur(8px);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      border-radius: 18px;
+      box-shadow:
+        0 1px 0 rgba(255,255,255,0.9) inset,
+        0 1px 2px rgba(15, 23, 42, 0.04),
+        0 8px 24px -12px rgba(15, 23, 42, 0.08);
+    }
+    .card-flat {
+      background: rgba(255,255,255,0.55);
+      border: 1px dashed rgba(15, 23, 42, 0.12);
+      border-radius: 18px;
+    }
+
+    /* primary button — gradient accent with crisp focus */
+    .btn-primary {
+      background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
+      color: white;
+      border: 1px solid rgba(67, 56, 202, 0.6);
+      box-shadow:
+        0 1px 0 rgba(255,255,255,0.25) inset,
+        0 1px 2px rgba(67, 56, 202, 0.25),
+        0 8px 20px -8px rgba(99, 102, 241, 0.55);
+      transition: transform 120ms ease, box-shadow 200ms ease, filter 200ms ease;
+    }
+    .btn-primary:hover { filter: brightness(1.05); transform: translateY(-0.5px); }
+    .btn-primary:active { transform: translateY(0.5px); filter: brightness(0.97); }
+    .btn-primary:disabled {
+      background: #e6e6e3; color: #9b9b97; border-color: #e6e6e3;
+      box-shadow: none; cursor: not-allowed; filter: none; transform: none;
+    }
+
+    /* inputs */
+    .field {
+      background: white;
+      border: 1px solid #e6e6e3;
+      border-radius: 12px;
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .field:focus {
+      outline: none;
+      border-color: #6366f1;
+      box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.12);
+    }
+
+    /* chip */
+    .chip {
+      background: white;
+      border: 1px solid #e6e6e3;
+      color: #2f2f2d;
+      transition: all 150ms ease;
+    }
+    .chip:hover { border-color: #c7c7c3; background: #fafaf9; }
+
+    /* timeline animated rail */
+    .timeline-item { position: relative; }
+    .timeline-item:not(:last-child)::before {
+      content: ''; position: absolute;
+      left: 11px; top: 28px; bottom: -12px;
+      width: 1px; background: linear-gradient(180deg, #e6e6e3, transparent);
+    }
+
+    /* subtle entrance */
+    .step-enter { animation: stepIn 280ms cubic-bezier(0.22, 1, 0.36, 1); }
+    @keyframes stepIn {
+      from { opacity: 0; transform: translateY(6px); filter: blur(2px); }
+      to   { opacity: 1; transform: translateY(0);   filter: blur(0); }
+    }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner { animation: spin 800ms linear infinite; }
+    .spinner { animation: spin 900ms linear infinite; }
+
+    @keyframes pulse-ring {
+      0%   { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.35); }
+      80%  { box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    }
+    .pulse-ring { animation: pulse-ring 1.6s ease-out infinite; border-radius: 9999px; }
+
+    /* details chevron */
     details > summary { list-style: none; cursor: pointer; }
     details > summary::-webkit-details-marker { display: none; }
     details[open] .chev { transform: rotate(90deg); }
-    .chev { transition: transform 150ms ease; }
+    .chev { transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1); }
+
+    /* code block */
+    .codeblock {
+      background: #0c0c0b;
+      color: #e6e6e3;
+      border: 1px solid #1a1a19;
+      border-radius: 12px;
+    }
+
+    /* severity pill */
+    .pill {
+      display: inline-flex; align-items: center;
+      padding: 1px 8px; border-radius: 9999px;
+      font-size: 10px; font-weight: 500; letter-spacing: 0.04em;
+      text-transform: uppercase; border: 1px solid transparent;
+      font-family: 'Geist Mono', ui-monospace, monospace;
+    }
+    .pill-critical { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .pill-high     { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+    .pill-moderate { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+    .pill-low      { background: #f1f1ef; color: #4a4a47; border-color: #e6e6e3; }
+    .pill-info     { background: #f1f1ef; color: #6b6b67; border-color: #e6e6e3; }
+
+    /* table */
+    .vuln-table { width: 100%; font-size: 12px; border-collapse: separate; border-spacing: 0; }
+    .vuln-table thead th {
+      text-align: left; font-weight: 500; color: #6b6b67;
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 8px 12px; border-bottom: 1px solid #e6e6e3;
+      background: #fafaf9;
+    }
+    .vuln-table tbody td { padding: 10px 12px; border-bottom: 1px solid #f1f1ef; vertical-align: middle; }
+    .vuln-table tbody tr:last-child td { border-bottom: none; }
+    .vuln-table tbody tr:hover { background: #fafaf9; }
+    .vuln-row-selected { background: linear-gradient(90deg, #eef2ff, transparent 80%) !important; }
+
+    /* chat bubbles */
+    .bubble-user {
+      background: linear-gradient(180deg, #4f46e5 0%, #4338ca 100%);
+      color: white;
+      border-radius: 18px 18px 4px 18px;
+      box-shadow: 0 4px 12px -4px rgba(67, 56, 202, 0.35);
+    }
+    .bubble-assistant {
+      background: white;
+      border: 1px solid #e6e6e3;
+      color: #1a1a19;
+      border-radius: 18px 18px 18px 4px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    /* scrollbars */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #e6e6e3; border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: #d2d2cf; background-clip: padding-box; }
+
+    /* tiny utility */
+    .ring-soft { box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.05), 0 1px 2px rgba(15,23,42,0.03); }
+    .gradient-text {
+      background: linear-gradient(135deg, #0c0c0b 0%, #4f46e5 80%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
   </style>
 </head>
-<body class="min-h-screen">
-  <div class="max-w-7xl mx-auto px-6 py-10">
-    <header class="mb-8 flex items-baseline gap-3">
-      <h1 class="text-3xl font-semibold tracking-tight">AutoSec</h1>
-      <span class="text-sm text-slate-400">autonomous dependency vulnerability remediation</span>
-      <span class="ml-auto text-xs text-slate-500 mono">UI runs are commit-local · push via CLI</span>
+<body>
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-10 lg:py-14">
+    <!-- ===== Header ===== -->
+    <header class="mb-10 flex items-center gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-accent-500 to-accent-700 grid place-items-center shadow-lg shadow-accent-500/30 ring-1 ring-accent-700/20">
+          <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3l8 4v5c0 4.5-3.4 8.4-8 9-4.6-.6-8-4.5-8-9V7l8-4z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4"/>
+          </svg>
+        </div>
+        <div class="leading-tight">
+          <div class="text-[22px] font-semibold tracking-tight text-ink-900">AutoSec</div>
+          <div class="text-[12px] text-ink-500">autonomous dependency remediation</div>
+        </div>
+      </div>
+      <div class="ml-auto hidden sm:flex items-center gap-2 text-[11px] mono text-ink-500 px-3 py-1.5 rounded-full bg-white/60 border border-ink-200">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20"></span>
+        ui runs are commit-local · push via cli
+      </div>
     </header>
 
-    <div class="grid grid-cols-1 lg:grid-cols-12 lg:gap-6">
+    <!-- ===== Hero strapline ===== -->
+    <div class="mb-8 max-w-3xl">
+      <h1 class="text-4xl sm:text-5xl font-semibold tracking-[-0.03em] text-ink-900 leading-[1.05]">
+        Patch your dependencies, <span class="serif-italic gradient-text">automatically</span>.
+      </h1>
+      <p class="mt-3 text-[15px] text-ink-500 max-w-2xl leading-relaxed">
+        Point AutoSec at a repo. It triages vulnerabilities, reads upstream changelogs, and asks a Claude agent to apply the fix — verified by your own test suite.
+      </p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 lg:gap-8">
     <main class="lg:col-span-8 min-w-0 space-y-6">
-    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-lg">
-      <form id="run-form" class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-        <div class="md:col-span-7">
-          <label class="block text-xs uppercase tracking-wide text-slate-400 mb-1">GitHub repo URL</label>
-          <input id="repoUrl" type="url" required
-            placeholder="https://github.com/owner/repo"
-            class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        </div>
-        <div class="md:col-span-3">
-          <label class="block text-xs uppercase tracking-wide text-slate-400 mb-1">Target package <span class="text-slate-500 normal-case">(optional)</span></label>
-          <input id="target" type="text" placeholder="jsdom"
-            class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        </div>
-        <div class="md:col-span-2">
-          <label class="block text-xs uppercase tracking-wide text-slate-400 mb-1">Max iters</label>
-          <input id="maxIters" type="number" min="1" max="20" value="5"
-            class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        </div>
-        <div class="md:col-span-9 flex items-center gap-3">
-          <label class="inline-flex items-center gap-2 text-sm text-slate-300">
-            <input id="dryRun" type="checkbox" class="accent-indigo-500" />
-            Dry run (scan only — no agent, no edits)
-          </label>
-        </div>
-        <div class="md:col-span-3 flex justify-end">
-          <button id="runBtn" type="submit"
-            class="bg-indigo-500 hover:bg-indigo-400 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-medium px-5 py-2 rounded-lg transition w-full md:w-auto">
-            Run AutoSec
-          </button>
-        </div>
-      </form>
-    </section>
 
-    <section id="empty-state" class="bg-slate-900/60 border border-slate-800 border-dashed rounded-2xl p-6">
-      <div class="flex items-start gap-3">
-        <div class="shrink-0 mt-1">
-          <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        </div>
-        <div class="flex-1 min-w-0">
-          <h2 class="text-base font-medium text-slate-200">What this does</h2>
-          <p class="text-sm text-slate-400 mt-1 leading-relaxed">
-            AutoSec scans a repo with <code class="mono text-slate-300">npm audit</code>, picks one direct-dependency vulnerability,
-            reads the upstream changelog, and uses a Claude headless agent to apply the bump and any required call-site edits.
-            It then runs the test suite as an oracle. UI runs commit locally — they never push.
-          </p>
-          <h3 class="text-xs uppercase tracking-wide text-slate-500 mt-5 mb-2">Try it on</h3>
-          <div id="example-chips" class="flex flex-wrap gap-2"></div>
-          <h3 class="text-xs uppercase tracking-wide text-slate-500 mt-5 mb-2">Pipeline</h3>
-          <ol class="text-sm text-slate-300 space-y-1 list-decimal list-inside">
-            <li>Clone the repo to an ephemeral workspace</li>
-            <li>Install dependencies and run <code class="mono text-slate-400">npm audit</code></li>
-            <li>Triage: prefer direct deps, sort by severity, dedupe vs. open PRs</li>
-            <li>Fetch GitHub release notes between current and fixed versions</li>
-            <li>Hand it all to a Claude agent with a strict allowlist</li>
-            <li>Re-verify with <code class="mono text-slate-400">npm test</code> and prepare a PR</li>
-          </ol>
-        </div>
-      </div>
-    </section>
+      <!-- ===== Run form ===== -->
+      <section class="card p-6 lg:p-7">
+        <form id="run-form" class="grid grid-cols-1 md:grid-cols-12 gap-4">
+          <div class="md:col-span-7">
+            <label class="block text-[11px] font-medium uppercase tracking-[0.08em] text-ink-500 mb-1.5">Repository URL</label>
+            <input id="repoUrl" type="url" required
+              placeholder="https://github.com/owner/repo"
+              class="field w-full px-3.5 py-2.5 mono text-[13px] text-ink-900 placeholder:text-ink-400" />
+          </div>
+          <div class="md:col-span-3">
+            <label class="block text-[11px] font-medium uppercase tracking-[0.08em] text-ink-500 mb-1.5">Target package <span class="normal-case tracking-normal text-ink-400">— optional</span></label>
+            <input id="target" type="text" placeholder="jsdom"
+              class="field w-full px-3.5 py-2.5 mono text-[13px] text-ink-900 placeholder:text-ink-400" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-[11px] font-medium uppercase tracking-[0.08em] text-ink-500 mb-1.5">Max iters</label>
+            <input id="maxIters" type="number" min="1" max="20" value="5"
+              class="field w-full px-3.5 py-2.5 mono text-[13px] text-ink-900" />
+          </div>
 
-    <section id="run-card" class="hidden bg-slate-900 border border-slate-800 rounded-2xl p-6">
-      <div class="flex items-center gap-3 mb-5 pb-4 border-b border-slate-800">
-        <div id="overall-icon" class="shrink-0"></div>
-        <div class="flex-1 min-w-0">
-          <div id="overall-title" class="text-lg font-medium truncate">Starting run…</div>
-          <div id="overall-sub" class="text-sm text-slate-400 truncate"></div>
-        </div>
-        <div class="text-right shrink-0">
-          <div id="elapsed" class="text-sm mono text-slate-300">0s</div>
-          <div id="run-id" class="text-xs mono text-slate-500"></div>
-        </div>
-      </div>
-
-      <ol id="timeline" class="space-y-3"></ol>
-
-      <details class="mt-6 group">
-        <summary class="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center gap-2">
-          <svg class="chev w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-          Show agent transcript
-        </summary>
-        <pre id="agent-output" class="mt-3 bg-slate-950 border border-slate-800 rounded-lg p-4 mono text-xs whitespace-pre-wrap text-slate-300 max-h-[50vh] overflow-y-auto"></pre>
-      </details>
-
-      <details class="mt-2 group">
-        <summary class="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center gap-2">
-          <svg class="chev w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-          Show raw events
-        </summary>
-        <pre id="raw-events" class="mt-3 bg-slate-950 border border-slate-800 rounded-lg p-4 mono text-[11px] whitespace-pre-wrap text-slate-400 max-h-[40vh] overflow-y-auto"></pre>
-      </details>
-    </section>
-
-    <footer class="mt-10 text-center text-xs text-slate-500">
-      AutoSec · CLI: <code class="mono">./bin/autosec.js run &lt;url&gt; --target &lt;pkg&gt;</code>
-    </footer>
-    </main>
-
-    <!-- ===== Chat (side panel on lg+, fixed slide-in drawer on small) ===== -->
-    <aside id="chat-aside" class="hidden lg:block lg:col-span-4">
-      <div class="lg:sticky lg:top-6">
-        <div id="chat-section" class="bg-slate-900 border border-slate-800 rounded-2xl flex flex-col min-h-[420px] max-h-[calc(100vh-6rem)]">
-          <div class="flex items-center gap-2 px-5 py-3 border-b border-slate-800 shrink-0">
-            <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-            <h3 class="text-sm font-medium text-slate-200">Ask about this run</h3>
-            <button id="chat-close" type="button" class="lg:hidden ml-auto text-slate-400 hover:text-slate-100" aria-label="close">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          <div class="md:col-span-12 flex items-center justify-between flex-wrap gap-3 pt-1">
+            <label class="inline-flex items-center gap-2.5 text-[13px] text-ink-700 cursor-pointer select-none group">
+              <span class="relative inline-flex">
+                <input id="dryRun" type="checkbox" class="peer sr-only" />
+                <span class="w-4 h-4 rounded-[5px] border border-ink-300 bg-white grid place-items-center peer-checked:bg-accent-600 peer-checked:border-accent-600 transition-colors"></span>
+                <svg class="absolute inset-0 w-4 h-4 text-white opacity-0 peer-checked:opacity-100 pointer-events-none" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3.5 8.5l3 3 6-7"/>
+                </svg>
+              </span>
+              <span class="group-hover:text-ink-900 transition-colors">Dry run <span class="text-ink-400">— scan only, no agent, no edits</span></span>
+            </label>
+            <button id="runBtn" type="submit"
+              class="btn-primary text-[13.5px] font-medium px-5 py-2.5 rounded-xl inline-flex items-center gap-2">
+              <span>Run AutoSec</span>
+              <svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 8h10m0 0L9 4m4 4l-4 4"/>
+              </svg>
             </button>
           </div>
-          <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-3 space-y-3 text-sm"></div>
-          <div class="px-4 py-3 border-t border-slate-800 shrink-0">
-            <div id="chat-suggestions" class="flex flex-wrap gap-1.5 mb-2"></div>
+        </form>
+      </section>
+
+      <!-- ===== Empty state ===== -->
+      <section id="empty-state" class="card-flat p-6 lg:p-7">
+        <div class="flex items-start gap-4">
+          <div class="shrink-0 mt-0.5 w-9 h-9 rounded-full bg-accent-50 grid place-items-center ring-1 ring-accent-100">
+            <svg class="w-4 h-4 text-accent-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <h2 class="text-[15px] font-medium text-ink-900">How it works</h2>
+            <p class="text-[13.5px] text-ink-600 mt-1.5 leading-relaxed">
+              AutoSec scans a repo with <code class="mono text-ink-900 bg-ink-100 px-1 py-0.5 rounded">npm audit</code>, picks one direct-dependency vulnerability, reads the upstream changelog, and uses a Claude headless agent to apply the bump and any required call-site edits. Then it runs your test suite as an oracle. UI runs commit locally — they never push.
+            </p>
+            <h3 class="text-[10px] font-medium uppercase tracking-[0.1em] text-ink-500 mt-6 mb-2.5">Try it on</h3>
+            <div id="example-chips" class="flex flex-wrap gap-2"></div>
+            <h3 class="text-[10px] font-medium uppercase tracking-[0.1em] text-ink-500 mt-6 mb-2.5">Pipeline</h3>
+            <ol class="text-[13px] text-ink-700 space-y-1.5">
+              <li class="flex gap-3"><span class="mono text-ink-400 w-5 shrink-0">01</span><span>Clone the repo to an ephemeral workspace</span></li>
+              <li class="flex gap-3"><span class="mono text-ink-400 w-5 shrink-0">02</span><span>Install dependencies and run <code class="mono text-ink-900">npm audit</code></span></li>
+              <li class="flex gap-3"><span class="mono text-ink-400 w-5 shrink-0">03</span><span>Triage: prefer direct deps, sort by severity, dedupe vs. open PRs</span></li>
+              <li class="flex gap-3"><span class="mono text-ink-400 w-5 shrink-0">04</span><span>Fetch GitHub release notes between current and fixed versions</span></li>
+              <li class="flex gap-3"><span class="mono text-ink-400 w-5 shrink-0">05</span><span>Run <code class="mono text-ink-900">npm test</code> on the unmodified repo to capture a baseline</span></li>
+              <li class="flex gap-3"><span class="mono text-ink-400 w-5 shrink-0">06</span><span>Hand it all to a Claude agent with a strict allowlist</span></li>
+              <li class="flex gap-3"><span class="mono text-ink-400 w-5 shrink-0">07</span><span>Re-verify with <code class="mono text-ink-900">npm test</code>, diff against baseline, and prepare a PR</span></li>
+              <li class="flex gap-3"><span class="mono text-ink-400 w-5 shrink-0">08</span><span>If anything goes wrong, self-diagnose and propose a patch to AutoSec itself</span></li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Run card ===== -->
+      <section id="run-card" class="hidden card p-6 lg:p-7">
+        <div class="flex items-center gap-4 mb-6 pb-5 border-b border-ink-200">
+          <div id="overall-icon" class="shrink-0"></div>
+          <div class="flex-1 min-w-0">
+            <div id="overall-title" class="text-[16px] font-medium text-ink-900 truncate">Starting run…</div>
+            <div id="overall-sub" class="text-[12.5px] text-ink-500 truncate mt-0.5"></div>
+          </div>
+          <div class="text-right shrink-0">
+            <div id="elapsed" class="text-[13px] mono text-ink-700 tabular-nums">0s</div>
+            <div id="run-id" class="text-[10.5px] mono text-ink-400 mt-0.5"></div>
+          </div>
+        </div>
+
+        <ol id="timeline" class="space-y-4"></ol>
+
+        <!-- Self-diagnosis panel (shown only on failure) -->
+        <div id="recovery-panel" class="hidden mt-6 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-white p-5">
+          <div class="flex items-center gap-2.5 mb-3">
+            <div class="w-7 h-7 rounded-full bg-amber-500 grid place-items-center ring-4 ring-amber-100">
+              <svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            </div>
+            <div class="flex-1">
+              <h3 class="text-[14px] font-medium text-ink-900">AutoSec self-diagnosis</h3>
+              <p id="recovery-sub" class="text-[12px] text-ink-500">Analyzing the failure against AutoSec's own source…</p>
+            </div>
+            <span id="recovery-status" class="pill pill-moderate">running</span>
+          </div>
+          <div id="recovery-content" class="rounded-xl bg-white border border-ink-200 p-4 text-[13px] leading-relaxed text-ink-800 whitespace-pre-wrap font-mono text-[12px] max-h-[60vh] overflow-y-auto"></div>
+          <div class="mt-3 flex items-center gap-2 text-[11px] text-ink-500">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span>Read-only diagnosis. AutoSec does not auto-apply patches — copy the diff and review it in your editor.</span>
+          </div>
+        </div>
+
+        <details class="mt-7 group">
+          <summary class="text-[11.5px] font-medium uppercase tracking-[0.08em] text-ink-500 hover:text-ink-900 inline-flex items-center gap-2 transition-colors">
+            <svg class="chev w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            Agent transcript
+          </summary>
+          <pre id="agent-output" class="mt-3 codeblock p-4 mono text-[11.5px] whitespace-pre-wrap max-h-[50vh] overflow-y-auto"></pre>
+        </details>
+
+        <details class="mt-2 group">
+          <summary class="text-[11.5px] font-medium uppercase tracking-[0.08em] text-ink-500 hover:text-ink-900 inline-flex items-center gap-2 transition-colors">
+            <svg class="chev w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            Raw events
+          </summary>
+          <pre id="raw-events" class="mt-3 codeblock p-4 mono text-[10.5px] whitespace-pre-wrap max-h-[40vh] overflow-y-auto" style="color:#9b9b97;"></pre>
+        </details>
+      </section>
+
+      <footer class="mt-10 text-center text-[11.5px] text-ink-400">
+        AutoSec · CLI: <code class="mono text-ink-600">./bin/autosec.js run &lt;url&gt; --target &lt;pkg&gt;</code>
+      </footer>
+    </main>
+
+    <!-- ===== Chat ===== -->
+    <aside id="chat-aside" class="hidden lg:block lg:col-span-4">
+      <div class="lg:sticky lg:top-6">
+        <div id="chat-section" class="card flex flex-col min-h-[460px] max-h-[calc(100vh-6rem)] overflow-hidden">
+          <div class="flex items-center gap-2.5 px-5 py-3.5 border-b border-ink-200 shrink-0">
+            <div class="w-7 h-7 rounded-full bg-gradient-to-br from-accent-500 to-accent-700 grid place-items-center">
+              <svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+              </svg>
+            </div>
+            <div class="leading-tight">
+              <h3 class="text-[13px] font-medium text-ink-900">Ask about this run</h3>
+              <p class="text-[11px] text-ink-500">Powered by Claude</p>
+            </div>
+            <button id="chat-close" type="button" class="lg:hidden ml-auto text-ink-500 hover:text-ink-900 transition-colors" aria-label="close">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-3 text-[13.5px]"></div>
+          <div class="px-4 py-3.5 border-t border-ink-200 shrink-0 bg-ink-50/50">
+            <div id="chat-suggestions" class="flex flex-wrap gap-1.5 mb-2.5"></div>
             <form id="chat-form" class="flex gap-2">
               <input id="chat-input" type="text" autocomplete="off"
-                placeholder="Ask about this run…"
-                class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-0" />
+                placeholder="Ask anything…"
+                class="field flex-1 px-3.5 py-2 text-[13px] text-ink-900 placeholder:text-ink-400 min-w-0" />
               <button id="chat-send" type="submit"
-                class="bg-indigo-500 hover:bg-indigo-400 disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition shrink-0">
+                class="btn-primary text-[13px] font-medium px-4 py-2 rounded-xl shrink-0">
                 Ask
               </button>
             </form>
@@ -155,33 +424,34 @@
     </div>
   </div>
 
-  <!-- Floating chat toggle for narrow screens -->
+  <!-- Floating chat toggle -->
   <button id="chat-fab" type="button"
-    class="lg:hidden fixed bottom-5 right-5 z-40 bg-indigo-500 hover:bg-indigo-400 text-white rounded-full p-4 shadow-lg shadow-indigo-500/30"
+    class="lg:hidden fixed bottom-5 right-5 z-40 btn-primary rounded-full p-4"
     aria-label="open chat">
-    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
   </button>
 
   <script>
     // -------- icons --------
     const ICONS = {
-      pending: '<svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2"/></svg>',
-      running: '<svg class="w-5 h-5 text-indigo-400 spinner" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2" stroke-dasharray="40 60"/></svg>',
-      done:    '<svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>',
-      warn:    '<svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 4h.01M5 19h14a2 2 0 001.84-2.75L13.74 4a2 2 0 00-3.48 0L3.16 16.25A2 2 0 005 19z"/></svg>',
-      error:   '<svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>',
-      skip:    '<svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>',
+      pending: '<svg class="w-[22px] h-[22px] text-ink-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><circle cx="12" cy="12" r="9"/></svg>',
+      running: '<span class="inline-block pulse-ring"><svg class="w-[22px] h-[22px] text-accent-600 spinner" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><circle cx="12" cy="12" r="9" stroke-dasharray="40 60"/></svg></span>',
+      done:    '<span class="inline-grid place-items-center w-[22px] h-[22px] rounded-full bg-emerald-500 ring-2 ring-emerald-100"><svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg></span>',
+      warn:    '<span class="inline-grid place-items-center w-[22px] h-[22px] rounded-full bg-amber-500 ring-2 ring-amber-100"><svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3m0 4h.01"/></svg></span>',
+      error:   '<span class="inline-grid place-items-center w-[22px] h-[22px] rounded-full bg-red-500 ring-2 ring-red-100"><svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg></span>',
+      skip:    '<span class="inline-grid place-items-center w-[22px] h-[22px] rounded-full bg-ink-100 ring-1 ring-ink-200"><svg class="w-3 h-3 text-ink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14"/></svg></span>',
     };
 
-    // -------- step definitions (narrative order) --------
+    // -------- step definitions --------
     const STEPS = [
       { id: 'clone',    title: 'Cloning repository' },
       { id: 'install',  title: 'Installing dependencies' },
       { id: 'scan',     title: 'Scanning for vulnerabilities' },
       { id: 'triage',   title: 'Selecting target vulnerability' },
       { id: 'context',  title: 'Gathering migration context' },
+      { id: 'baseline', title: 'Baseline tests (pre-fix)' },
       { id: 'agent',    title: 'Agent applying the fix' },
-      { id: 'verify',   title: 'Running tests' },
+      { id: 'verify',   title: 'Verification tests (post-fix)' },
       { id: 'pr',       title: 'Preparing pull request' },
     ];
 
@@ -203,8 +473,8 @@
     let ticker = null;
     let dryRun = false;
     let scannedVulns = [];
+    let baselineTests = [];
 
-    // -------- helpers --------
     function esc(s) {
       return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
@@ -214,29 +484,29 @@
       const m = Math.floor(s / 60), r = s % 60;
       return `${m}m ${r}s`;
     }
-    function sevColor(sev) {
-      return ({
-        critical: 'bg-red-500/20 text-red-300 border-red-500/40',
-        high: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
-        moderate: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-        low: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
-        info: 'bg-slate-500/10 text-slate-400 border-slate-700',
-      }[sev] || 'bg-slate-500/10 text-slate-400 border-slate-700');
+    function sevPill(sev) {
+      const cls = ({
+        critical: 'pill-critical',
+        high: 'pill-high',
+        moderate: 'pill-moderate',
+        low: 'pill-low',
+        info: 'pill-info',
+      }[sev] || 'pill-info');
+      return `<span class="pill ${cls}">${esc(sev)}</span>`;
     }
 
-    // -------- render initial timeline --------
     function renderTimeline() {
       timelineEl.innerHTML = '';
       for (const step of STEPS) {
         const li = document.createElement('li');
         li.id = 'step-' + step.id;
-        li.className = 'flex gap-3 items-start';
+        li.className = 'timeline-item flex gap-3.5 items-start';
         li.innerHTML = `
           <div class="step-icon shrink-0 mt-0.5">${ICONS.pending}</div>
-          <div class="flex-1 min-w-0">
-            <div class="step-title text-sm text-slate-400">${esc(step.title)}</div>
-            <div class="step-detail mt-1 text-xs text-slate-500"></div>
-            <div class="step-extra mt-2"></div>
+          <div class="flex-1 min-w-0 pb-1">
+            <div class="step-title text-[13.5px] text-ink-400 font-medium">${esc(step.title)}</div>
+            <div class="step-detail mt-0.5 text-[12px] text-ink-500"></div>
+            <div class="step-extra mt-2.5"></div>
           </div>
         `;
         timelineEl.appendChild(li);
@@ -252,14 +522,14 @@
       const extraEl = li.querySelector('.step-extra');
       iconEl.innerHTML = ICONS[state] || ICONS.pending;
       const colorMap = {
-        pending: 'text-slate-400',
-        running: 'text-slate-100',
-        done: 'text-slate-100',
-        warn: 'text-amber-200',
-        error: 'text-red-300',
-        skip: 'text-slate-500 line-through decoration-slate-700',
+        pending: 'text-ink-400',
+        running: 'text-ink-900',
+        done: 'text-ink-900',
+        warn: 'text-amber-700',
+        error: 'text-red-700',
+        skip: 'text-ink-400 line-through decoration-ink-300',
       };
-      titleEl.className = 'step-title text-sm ' + (colorMap[state] || 'text-slate-200');
+      titleEl.className = 'step-title text-[13.5px] font-medium ' + (colorMap[state] || 'text-ink-900');
       if (detail !== undefined) detailEl.textContent = detail || '';
       if (extraHtml !== undefined) {
         extraEl.innerHTML = extraHtml || '';
@@ -273,34 +543,32 @@
       li.querySelector('.step-title').textContent = title;
     }
 
-    // -------- scan results table --------
     function vulnTableHtml(vulns, selectedPkg) {
       if (!vulns.length) {
-        return '<div class="text-xs text-slate-500 italic">No actionable vulnerabilities found.</div>';
+        return '<div class="text-[12px] text-ink-500 italic">No actionable vulnerabilities found.</div>';
       }
       const rows = vulns.map(v => {
         const isSel = selectedPkg && v.package === selectedPkg;
-        const rowCls = isSel ? 'bg-indigo-500/10 ring-1 ring-indigo-400/40' : 'hover:bg-slate-800/40';
         return `
-          <tr class="${rowCls}">
-            <td class="py-1.5 pr-3 mono">${esc(v.package)}</td>
-            <td class="py-1.5 pr-3"><span class="px-1.5 py-0.5 rounded border text-[10px] uppercase tracking-wide ${sevColor(v.severity)}">${esc(v.severity)}</span></td>
-            <td class="py-1.5 pr-3 mono text-slate-400">${esc(v.current || '?')} <span class="text-slate-600">→</span> ${esc(v.fixed)}</td>
-            <td class="py-1.5 pr-3">${v.isMajorBump ? '<span class="text-amber-300 text-[10px] uppercase">major</span>' : '<span class="text-slate-500 text-[10px] uppercase">minor</span>'}</td>
-            <td class="py-1.5 text-slate-400 truncate max-w-[200px]" title="${esc(v.title)}">${esc(v.title || '—')}</td>
+          <tr class="${isSel ? 'vuln-row-selected' : ''}">
+            <td class="mono text-ink-900">${esc(v.package)}</td>
+            <td>${sevPill(v.severity)}</td>
+            <td class="mono text-ink-500"><span class="text-ink-700">${esc(v.current || '?')}</span> <span class="text-ink-300">→</span> <span class="text-ink-900">${esc(v.fixed)}</span></td>
+            <td>${v.isMajorBump ? '<span class="pill pill-high">major</span>' : '<span class="pill pill-low">minor</span>'}</td>
+            <td class="text-ink-600 truncate max-w-[200px]" title="${esc(v.title)}">${esc(v.title || '—')}</td>
           </tr>
         `;
       }).join('');
       return `
-        <div class="border border-slate-800 rounded-lg overflow-hidden">
-          <table class="w-full text-xs">
-            <thead class="bg-slate-800/50">
-              <tr class="text-left text-slate-400 uppercase tracking-wide text-[10px]">
-                <th class="py-1.5 px-3">Package</th>
-                <th class="py-1.5 pr-3">Severity</th>
-                <th class="py-1.5 pr-3">Bump</th>
-                <th class="py-1.5 pr-3"></th>
-                <th class="py-1.5 pr-3">Advisory</th>
+        <div class="rounded-xl ring-soft overflow-hidden bg-white">
+          <table class="vuln-table">
+            <thead>
+              <tr>
+                <th>Package</th>
+                <th>Severity</th>
+                <th>Bump</th>
+                <th></th>
+                <th>Advisory</th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -309,67 +577,62 @@
       `;
     }
 
-    // -------- result block (rendered into pr step) --------
     function resultExtraHtml(result) {
       if (!result) return '';
       if (result.status === 'no-op') {
-        return `<div class="text-xs text-slate-400">${esc(result.reason || 'nothing to do')}</div>`;
+        return `<div class="text-[12.5px] text-ink-500">${esc(result.reason || 'nothing to do')}</div>`;
       }
       if (result.status === 'failed') {
-        return `<div class="text-xs text-red-300">${esc(result.reason || 'failed')}</div>`;
+        return `<div class="text-[12.5px] text-red-700">${esc(result.reason || 'failed')}</div>`;
       }
       if (result.status === 'dry-run') {
         const cs = result.ctxSummary || {};
         return `
-          <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs space-y-2">
-            <div><span class="text-slate-500">Test command:</span> <code class="mono text-slate-300">${esc(cs.testCommand || '(none)')}</code></div>
-            <div><span class="text-slate-500">Call sites:</span><br>${(cs.callSites || []).map(s => `<code class="mono text-slate-300">${esc(s)}</code>`).join('<br>') || '<span class="text-slate-500">none</span>'}</div>
-            <div><span class="text-slate-500">Changelog:</span> ${esc(cs.changelog?.source)} · ${esc(cs.changelog?.notes)} · ${cs.changelog?.chars} chars</div>
+          <div class="rounded-xl ring-soft bg-white p-4 text-[12.5px] space-y-2.5">
+            <div><span class="text-ink-500">Test command:</span> <code class="mono text-ink-900 bg-ink-100 px-1.5 py-0.5 rounded">${esc(cs.testCommand || '(none)')}</code></div>
+            <div><span class="text-ink-500">Call sites:</span><div class="mt-1 space-y-0.5">${(cs.callSites || []).map(s => `<code class="mono text-ink-900 block">${esc(s)}</code>`).join('') || '<span class="text-ink-400">none</span>'}</div></div>
+            <div><span class="text-ink-500">Changelog:</span> <span class="text-ink-700">${esc(cs.changelog?.source)} · ${esc(cs.changelog?.notes)} · ${cs.changelog?.chars} chars</span></div>
           </div>
         `;
       }
-      // committed-local / pr-opened
       const summary = result.summary || {};
       const pr = result.pr || {};
       return `
-        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs space-y-3">
+        <div class="rounded-xl ring-soft bg-white p-4 text-[12.5px] space-y-3.5">
           <div class="flex items-center gap-2">
-            <span class="text-slate-500">Branch:</span>
-            <code class="mono text-slate-200">${esc(pr.branch || '')}</code>
+            <span class="text-ink-500">Branch:</span>
+            <code class="mono text-ink-900 bg-ink-100 px-1.5 py-0.5 rounded">${esc(pr.branch || '')}</code>
           </div>
           ${summary.migration_notes ? `
             <div>
-              <div class="text-slate-500 mb-1">Agent migration notes:</div>
-              <div class="whitespace-pre-wrap text-slate-300">${esc(summary.migration_notes)}</div>
+              <div class="text-[10px] uppercase tracking-[0.08em] text-ink-500 mb-1.5">Migration notes</div>
+              <div class="whitespace-pre-wrap text-ink-800 leading-relaxed">${esc(summary.migration_notes)}</div>
             </div>` : ''}
           ${summary.files_touched?.length ? `
             <div>
-              <div class="text-slate-500 mb-1">Files touched:</div>
-              ${summary.files_touched.map(f => `<code class="mono text-slate-300 block">${esc(f)}</code>`).join('')}
+              <div class="text-[10px] uppercase tracking-[0.08em] text-ink-500 mb-1.5">Files touched</div>
+              <div class="space-y-0.5">${summary.files_touched.map(f => `<code class="mono text-ink-900 block">${esc(f)}</code>`).join('')}</div>
             </div>` : ''}
           ${pr.diffstat ? `
             <div>
-              <div class="text-slate-500 mb-1">Diffstat:</div>
-              <pre class="mono text-slate-300 whitespace-pre-wrap text-[11px]">${esc(pr.diffstat)}</pre>
+              <div class="text-[10px] uppercase tracking-[0.08em] text-ink-500 mb-1.5">Diffstat</div>
+              <pre class="mono text-ink-800 whitespace-pre-wrap text-[11.5px] bg-ink-50 rounded-lg p-3 border border-ink-200">${esc(pr.diffstat)}</pre>
             </div>` : ''}
           ${pr.workspace ? `
-            <div class="text-[11px]">
-              <span class="text-slate-500">Workspace:</span>
-              <code class="mono text-slate-400">${esc(pr.workspace)}</code>
+            <div class="text-[11px] pt-1 border-t border-ink-100">
+              <span class="text-ink-500">Workspace:</span>
+              <code class="mono text-ink-600">${esc(pr.workspace)}</code>
             </div>` : ''}
-          ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" class="inline-block text-indigo-300 hover:underline">View PR →</a>` : ''}
+          ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" class="inline-flex items-center gap-1.5 text-accent-600 hover:text-accent-700 font-medium">View PR <svg class="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 3h7v7M13 3L4 12"/></svg></a>` : ''}
         </div>
       `;
     }
 
-    // -------- event handler --------
     function handleEvent(evt) {
-      // raw event log (collapsed by default)
       const ts = (evt.ts || '').slice(11, 19);
       rawEventsEl.textContent += `[${ts}] ${evt.stage} ${evt.data ? JSON.stringify(evt.data) : ''}\n`;
       rawEventsEl.scrollTop = rawEventsEl.scrollHeight;
 
-      // agent stdout chunks → drawer
       if (evt.stage === 'agent.chunk') {
         const t = evt.data?.text || '';
         agentOutEl.textContent += t;
@@ -384,21 +647,17 @@
           overallTitle.textContent = 'Run queued';
           overallSub.textContent = d.repoUrl || '';
           break;
-
         case 'clone':
           setStep('clone', 'running', 'Cloning ' + (d.repoUrl || ''));
           break;
-
         case 'npm-install':
           setStep('clone', 'done', 'Cloned to ' + (d.repoDir ? shortenPath(d.repoDir) : 'workspace'));
           setStep('install', 'running', 'Resolving and installing packages…');
           break;
-
         case 'scan':
           setStep('install', 'done');
           setStep('scan', 'running', 'Running npm audit…');
           break;
-
         case 'scan.result': {
           scannedVulns = d.vulns || [];
           const n = d.count || 0;
@@ -406,58 +665,64 @@
           updateStepTitle('scan', n === 0 ? 'Scan complete — no actionable vulnerabilities' : `Scan complete — found ${n} ${word}`);
           setStep('scan', n === 0 ? 'warn' : 'done', '', vulnTableHtml(scannedVulns, null));
           if (n === 0) {
-            // mark downstream as skipped
             ['triage','context','agent','verify','pr'].forEach(id => setStep(id, 'skip', '—'));
           } else {
             setStep('triage', 'running', 'Picking the best target…');
           }
           break;
         }
-
         case 'target': {
           const t = d;
-          setStep('triage', 'done',
-            null,
-            `<div class="bg-indigo-500/10 border border-indigo-400/30 rounded-lg p-3 text-xs">
-              <div class="text-indigo-300 mb-1">Selected target</div>
-              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <code class="mono text-slate-100">${esc(t.package)}</code>
-                <span class="px-1.5 py-0.5 rounded border text-[10px] uppercase ${sevColor(t.severity)}">${esc(t.severity)}</span>
-                <span class="text-slate-400 mono">${esc(t.current || '?')} → ${esc(t.fixed)}</span>
-                ${t.isMajorBump ? '<span class="text-amber-300 text-[10px] uppercase">major bump</span>' : ''}
+          setStep('triage', 'done', null,
+            `<div class="rounded-xl bg-gradient-to-br from-accent-50 to-white border border-accent-100 p-4 text-[12.5px]">
+              <div class="text-[10px] uppercase tracking-[0.08em] text-accent-700 font-medium mb-2">Selected target</div>
+              <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                <code class="mono text-ink-900 font-medium">${esc(t.package)}</code>
+                ${sevPill(t.severity)}
+                <span class="text-ink-500 mono"><span class="text-ink-700">${esc(t.current || '?')}</span> <span class="text-ink-300">→</span> <span class="text-ink-900">${esc(t.fixed)}</span></span>
+                ${t.isMajorBump ? '<span class="pill pill-high">major bump</span>' : ''}
               </div>
-              ${t.title ? `<div class="text-slate-400 mt-1">${esc(t.title)}</div>` : ''}
-              ${t.advisoryUrl ? `<a href="${esc(t.advisoryUrl)}" target="_blank" class="text-indigo-300 hover:underline text-[11px]">${esc(t.advisoryUrl)}</a>` : ''}
+              ${t.title ? `<div class="text-ink-600 mt-2 leading-relaxed">${esc(t.title)}</div>` : ''}
+              ${t.advisoryUrl ? `<a href="${esc(t.advisoryUrl)}" target="_blank" class="text-accent-600 hover:text-accent-700 text-[11.5px] mt-2 inline-block">${esc(t.advisoryUrl)}</a>` : ''}
             </div>`
           );
           updateStepTitle('triage', `Selected ${t.package} ${t.current || '?'} → ${t.fixed}`);
-          // re-render scan table with selection highlighted
           const scanLi = document.getElementById('step-scan');
           if (scanLi) scanLi.querySelector('.step-extra').innerHTML = vulnTableHtml(scannedVulns, t.package);
           setStep('context', 'running', 'Fetching changelog and finding call sites…');
           break;
         }
-
         case 'context.result': {
           const cs = `${d.callSites} call site${d.callSites === 1 ? '' : 's'} · ${d.changelogChars > 0 ? Math.round(d.changelogChars/1024) + 'KB changelog' : 'no changelog'} · test: ${d.testCommand || '(none)'}`;
           updateStepTitle('context', 'Gathered migration context');
           setStep('context', 'done', cs);
           if (dryRun) {
-            ['agent','verify','pr'].forEach(id => setStep(id, 'skip', '—'));
+            ['baseline','agent','verify','pr'].forEach(id => setStep(id, 'skip', '—'));
           } else if (!d.testCommand) {
-            setStep('agent', 'skip', 'no test command — refusing to run agent');
-            setStep('verify', 'skip', '—');
-            setStep('pr', 'skip', '—');
+            ['baseline','agent','verify','pr'].forEach(id => setStep(id, 'skip', id === 'baseline' || id === 'agent' ? 'no test command — refusing to run' : '—'));
           } else {
-            setStep('agent', 'running', 'Calling Claude headless inside the workspace…');
+            setStep('baseline', 'running', `Running ${esc(d.testCommand)} on the unmodified repo…`);
           }
           break;
         }
-
+        case 'baseline':
+          // emitted right before baseline test run
+          setStep('baseline', 'running', 'Running tests on the unmodified repo…');
+          break;
+        case 'baseline.result': {
+          baselineTests = d.tests || [];
+          const counts = countTests(baselineTests);
+          updateStepTitle('baseline', d.pass ? `Baseline tests pass${counts.summary ? ' — ' + counts.summary : ''}` : `Baseline tests failed${counts.summary ? ' — ' + counts.summary : ''}`);
+          setStep('baseline',
+            d.pass ? 'done' : 'warn',
+            d.pass ? 'All tests green before any changes' : 'Tests already failing before AutoSec touched anything (regressions can\'t be detected)',
+            testsExtraHtml(baselineTests, d.output, 'baseline'));
+          setStep('agent', 'running', 'Calling Claude headless inside the workspace…');
+          break;
+        }
         case 'agent.start':
           setStep('agent', 'running', 'Calling Claude headless inside the workspace…');
           break;
-
         case 'agent.done':
           updateStepTitle('agent', `Agent finished (${d.status})`);
           setStep('agent', d.status === 'success' ? 'done' : (d.status === 'failed' ? 'error' : 'warn'),
@@ -466,24 +731,58 @@
                   : 'Agent did not complete the fix');
           setStep('verify', 'running', 'Re-running test suite independently…');
           break;
-
-        case 'verify.result':
-          updateStepTitle('verify', d.pass ? 'Tests pass' : 'Tests failed');
+        case 'verify.result': {
+          const tests = d.tests || [];
+          const counts = countTests(tests);
+          const baseTests = d.baselineTests || baselineTests || [];
+          const diff = diffTests(baseTests, tests);
+          updateStepTitle('verify', d.pass ? `Tests pass${counts.summary ? ' — ' + counts.summary : ''}` : `Tests failed${counts.summary ? ' — ' + counts.summary : ''}`);
           setStep('verify', d.pass ? 'done' : 'warn',
-                  d.pass ? 'Independent verification: green' : 'Tests did not pass — PR will be drafted as needs-human');
+                  d.pass ? 'Independent verification: green' : 'Tests did not pass — PR will be drafted as needs-human',
+                  testsExtraHtml(tests, d.output, 'verify', diff));
           setStep('pr', 'running', 'Creating branch and committing…');
           break;
-
+        }
         case 'pr.open':
-          // ignore — final result handled in 'done'
           break;
-
         case 'done':
-          // overall done; final card rendered in fetchFinal
           break;
-
+        case 'recovery.start': {
+          const panel = document.getElementById('recovery-panel');
+          panel.classList.remove('hidden');
+          document.getElementById('recovery-sub').textContent =
+            d.failedStage ? `Investigating failure in stage "${d.failedStage}"…` : 'Investigating the failure…';
+          document.getElementById('recovery-status').className = 'pill pill-moderate';
+          document.getElementById('recovery-status').textContent = 'thinking';
+          document.getElementById('recovery-content').textContent = '';
+          break;
+        }
+        case 'recovery.chunk': {
+          const el = document.getElementById('recovery-content');
+          el.textContent += d.text || '';
+          el.scrollTop = el.scrollHeight;
+          break;
+        }
+        case 'recovery.done': {
+          document.getElementById('recovery-sub').textContent = 'Patch proposal ready — review and apply manually.';
+          const status = document.getElementById('recovery-status');
+          status.className = 'pill pill-low';
+          status.textContent = 'ready';
+          const el = document.getElementById('recovery-content');
+          el.classList.remove('font-mono', 'text-[12px]');
+          el.classList.add('text-[13px]');
+          el.innerHTML = renderDiagnosis(d.proposal || el.textContent);
+          break;
+        }
+        case 'recovery.error': {
+          document.getElementById('recovery-sub').textContent = 'Self-diagnosis failed.';
+          const status = document.getElementById('recovery-status');
+          status.className = 'pill pill-critical';
+          status.textContent = 'error';
+          document.getElementById('recovery-content').textContent = d.message || 'unknown error';
+          break;
+        }
         case 'error':
-          // mark current running step as error
           for (const s of STEPS) {
             const li = document.getElementById('step-' + s.id);
             if (li && li.querySelector('.step-icon').innerHTML.includes('spinner')) {
@@ -495,13 +794,140 @@
       }
     }
 
+    function countTests(tests) {
+      const c = { pass: 0, fail: 0, skip: 0, total: tests.length };
+      for (const t of tests) c[t.status] = (c[t.status] || 0) + 1;
+      const parts = [];
+      if (c.pass) parts.push(`${c.pass} pass`);
+      if (c.fail) parts.push(`${c.fail} fail`);
+      if (c.skip) parts.push(`${c.skip} skip`);
+      c.summary = parts.join(' · ');
+      return c;
+    }
+
+    function diffTests(before, after) {
+      const key = (t) => (t.file || '') + '::' + t.name;
+      const beforeMap = new Map(before.map(t => [key(t), t.status]));
+      const afterMap = new Map(after.map(t => [key(t), t.status]));
+      const newlyFailing = []; // pass before, fail after  (regression)
+      const newlyPassing = []; // fail before, pass after  (recovered)
+      for (const t of after) {
+        const k = key(t);
+        const prev = beforeMap.get(k);
+        if (prev === 'pass' && t.status === 'fail') newlyFailing.push(t);
+        if (prev === 'fail' && t.status === 'pass') newlyPassing.push(t);
+      }
+      return { newlyFailing, newlyPassing };
+    }
+
+    function testStatusPill(status) {
+      if (status === 'pass') return '<span class="pill pill-low" style="background:#ecfdf5;color:#047857;border-color:#a7f3d0;">pass</span>';
+      if (status === 'fail') return '<span class="pill pill-critical">fail</span>';
+      if (status === 'skip') return '<span class="pill pill-info">skip</span>';
+      return `<span class="pill pill-info">${esc(status)}</span>`;
+    }
+
+    function testListHtml(tests, label) {
+      if (!tests.length) return '';
+      // Sort: failures first, then skips, then passes; keep insertion order within group.
+      const order = { fail: 0, skip: 1, pass: 2 };
+      const sorted = [...tests].sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+      const rows = sorted.map(t => `
+        <li class="flex items-start gap-2.5 py-1.5 px-2 rounded hover:bg-ink-50">
+          <div class="shrink-0 mt-0.5">${testStatusPill(t.status)}</div>
+          <div class="min-w-0 flex-1">
+            <div class="mono text-[12px] text-ink-900 break-words">${esc(t.name)}</div>
+            ${t.file ? `<div class="mono text-[10.5px] text-ink-400">${esc(t.file)}</div>` : ''}
+          </div>
+        </li>
+      `).join('');
+      return `<ul class="divide-y divide-ink-100">${rows}</ul>`;
+    }
+
+    function testsExtraHtml(tests, output, kind, diff) {
+      const counts = countTests(tests);
+      const hasParsed = tests.length > 0;
+      const diffBlock = (diff && (diff.newlyFailing.length || diff.newlyPassing.length)) ? `
+        <div class="rounded-xl border border-ink-200 bg-white p-3 mb-2.5 text-[12px] space-y-2">
+          ${diff.newlyFailing.length ? `
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.08em] text-red-700 font-medium mb-1.5">Regressions (${diff.newlyFailing.length}) — passed before, fail now</div>
+              <ul class="space-y-0.5">${diff.newlyFailing.map(t => `<li class="mono text-red-700">${esc(t.name)}${t.file ? ` <span class="text-ink-400">${esc(t.file)}</span>` : ''}</li>`).join('')}</ul>
+            </div>` : ''}
+          ${diff.newlyPassing.length ? `
+            <div>
+              <div class="text-[10px] uppercase tracking-[0.08em] text-emerald-700 font-medium mb-1.5">Newly passing (${diff.newlyPassing.length}) — failed before, pass now</div>
+              <ul class="space-y-0.5">${diff.newlyPassing.map(t => `<li class="mono text-emerald-700">${esc(t.name)}${t.file ? ` <span class="text-ink-400">${esc(t.file)}</span>` : ''}</li>`).join('')}</ul>
+            </div>` : ''}
+        </div>` : '';
+
+      const listSection = hasParsed ? `
+        <details ${counts.fail ? 'open' : ''} class="rounded-xl border border-ink-200 bg-white">
+          <summary class="px-3.5 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-ink-50 rounded-xl">
+            <svg class="chev w-3 h-3 text-ink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            <span class="text-[11.5px] font-medium uppercase tracking-[0.08em] text-ink-500">Individual tests</span>
+            <span class="ml-auto text-[11px] text-ink-500">${counts.summary || `${counts.total} total`}</span>
+          </summary>
+          <div class="px-2 pb-2">${testListHtml(tests, kind)}</div>
+        </details>` : `
+        <div class="rounded-xl border border-ink-200 bg-amber-50/50 p-3 text-[11.5px] text-ink-600">
+          AutoSec couldn't parse individual test names from this runner's output. See raw output below.
+        </div>`;
+
+      const outputBlock = output ? `
+        <details class="mt-2 rounded-xl border border-ink-200 bg-white">
+          <summary class="px-3.5 py-2.5 flex items-center gap-2 cursor-pointer hover:bg-ink-50 rounded-xl">
+            <svg class="chev w-3 h-3 text-ink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            <span class="text-[11.5px] font-medium uppercase tracking-[0.08em] text-ink-500">Raw test output</span>
+          </summary>
+          <pre class="codeblock m-2 p-3 mono text-[11px] whitespace-pre-wrap max-h-[40vh] overflow-y-auto">${esc(output)}</pre>
+        </details>` : '';
+
+      return diffBlock + listSection + outputBlock;
+    }
+
+    function renderDiagnosis(md) {
+      const escHtml = (s) => esc(s);
+      // Extract fenced code blocks first to protect them from inline transforms.
+      const blocks = [];
+      let work = md.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, body) => {
+        blocks.push({ lang: lang || '', body });
+        return ` BLOCK${blocks.length - 1} `;
+      });
+      // Headings
+      work = work.replace(/^## (.+)$/gm,
+        '<h4 class="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-accent-700 mt-4 mb-1.5 first:mt-0">$1</h4>');
+      // Bold
+      work = work.replace(/\*\*([^*]+)\*\*/g, '<strong class="text-ink-900 font-medium">$1</strong>');
+      // Inline code
+      work = work.replace(/`([^`]+)`/g, '<code class="mono bg-ink-100 text-ink-900 px-1 py-0.5 rounded text-[11.5px]">$1</code>');
+      // Paragraphs (line breaks)
+      work = work.split('\n').map(l => l.trim() === '' ? '' : l).join('\n');
+      work = work.replace(/\n{2,}/g, '</p><p class="mt-2">').replace(/\n/g, '<br>');
+      work = '<p>' + work + '</p>';
+      // Restore code blocks with diff coloring
+      work = work.replace(/ BLOCK(\d+) /g, (_, i) => {
+        const { lang, body } = blocks[i];
+        const isDiff = lang === 'diff' || /^[+-]/m.test(body);
+        const lines = body.split('\n').map(line => {
+          const e = escHtml(line);
+          if (!isDiff) return `<span>${e}</span>`;
+          if (line.startsWith('+')) return `<span class="text-emerald-700 bg-emerald-50 block">${e}</span>`;
+          if (line.startsWith('-')) return `<span class="text-red-700 bg-red-50 block">${e}</span>`;
+          if (line.startsWith('@@')) return `<span class="text-accent-600 block">${e}</span>`;
+          return `<span class="text-ink-700 block">${e}</span>`;
+        }).join('');
+        return `<pre class="mono text-[11.5px] leading-relaxed bg-ink-50 border border-ink-200 rounded-lg p-3 my-2.5 overflow-x-auto">${lines}</pre>`;
+      });
+      return work;
+    }
+
     function shortenPath(p) {
       if (!p) return '';
       if (p.length < 60) return p;
       return '…' + p.slice(-55);
     }
 
-    // -------- final state --------
     async function finishRun(runId) {
       try {
         const r = await fetch('/api/runs/' + runId);
@@ -509,7 +935,6 @@
         const state = await r.json();
         const result = state.result;
 
-        // populate PR step with final result UI
         if (result) {
           const finalState = result.status === 'no-op' ? 'skip'
             : result.status === 'failed' ? 'error'
@@ -527,7 +952,6 @@
           setStep('pr', finalState, null, resultExtraHtml(result));
         }
 
-        // overall banner
         const overallState = state.error ? 'error' : (state.status === 'done' ? 'done' : 'warn');
         overallIcon.innerHTML = ICONS[overallState];
         if (state.error) {
@@ -589,7 +1013,7 @@
       for (const s of SUGGESTIONS) {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'text-[11px] text-slate-300 bg-slate-800/60 hover:bg-slate-700 border border-slate-700 rounded-full px-2.5 py-1 transition';
+        b.className = 'chip text-[11px] rounded-full px-2.5 py-1';
         b.textContent = s;
         b.addEventListener('click', () => {
           if (chatBusy) return;
@@ -604,9 +1028,8 @@
       const wrap = document.createElement('div');
       wrap.className = role === 'user' ? 'flex justify-end' : 'flex justify-start';
       const bubble = document.createElement('div');
-      bubble.className = role === 'user'
-        ? 'max-w-[85%] bg-indigo-500/15 border border-indigo-500/30 text-slate-100 rounded-2xl rounded-br-sm px-4 py-2 whitespace-pre-wrap'
-        : 'max-w-[85%] bg-slate-800/70 border border-slate-700 text-slate-100 rounded-2xl rounded-bl-sm px-4 py-2 whitespace-pre-wrap';
+      bubble.className = (role === 'user' ? 'bubble-user' : 'bubble-assistant')
+        + ' max-w-[88%] px-3.5 py-2 whitespace-pre-wrap leading-relaxed';
       if (opts.streaming) bubble.dataset.streaming = '1';
       bubble.textContent = text;
       wrap.appendChild(bubble);
@@ -618,8 +1041,8 @@
     function clearChat() {
       chatMessagesEl.innerHTML = '';
       const hint = document.createElement('div');
-      hint.className = 'text-xs text-slate-500 italic text-center py-2';
-      hint.textContent = 'Ask anything about this run — selection, agent decisions, test results, the diff…';
+      hint.className = 'text-[12px] text-ink-400 italic text-center py-3';
+      hint.textContent = 'Ask anything about this run — selection, agent decisions, test results, the diff.';
       chatMessagesEl.appendChild(hint);
       renderSuggestions();
     }
@@ -636,13 +1059,12 @@
       chatBusy = true;
       chatSend.disabled = true;
       chatSend.textContent = '…';
-      // hide hint on first ask
       const hint = chatMessagesEl.querySelector('.italic');
       if (hint) hint.remove();
       chatBubble('user', message);
       chatInput.value = '';
       const replyBubble = chatBubble('assistant', '', { streaming: true });
-      replyBubble.classList.add('text-slate-400');
+      replyBubble.classList.add('text-ink-500');
       replyBubble.textContent = 'Thinking…';
 
       try {
@@ -655,7 +1077,6 @@
           const err = await r.json().catch(() => ({}));
           throw new Error(err.error || `HTTP ${r.status}`);
         }
-        // SSE-style stream
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = '';
@@ -674,7 +1095,7 @@
             try { evt = JSON.parse(line.slice(6)); } catch { continue; }
             if (evt.type === 'chunk') {
               if (firstChunk) {
-                replyBubble.classList.remove('text-slate-400');
+                replyBubble.classList.remove('text-ink-500');
                 replyBubble.textContent = '';
                 firstChunk = false;
               }
@@ -685,13 +1106,13 @@
               replyBubble.textContent = (evt.text || full).trim();
               chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
             } else if (evt.type === 'error') {
-              replyBubble.classList.add('text-red-300');
+              replyBubble.classList.add('text-red-700');
               replyBubble.textContent = 'Error: ' + evt.message;
             }
           }
         }
       } catch (err) {
-        replyBubble.classList.add('text-red-300');
+        replyBubble.classList.add('text-red-700');
         replyBubble.textContent = 'Error: ' + err.message;
       } finally {
         chatBusy = false;
@@ -705,13 +1126,15 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       runBtn.disabled = true;
-      runBtn.textContent = 'Starting…';
+      runBtn.querySelector('span').textContent = 'Starting…';
       runCard.classList.remove('hidden');
       runCard.classList.add('mt-6');
       emptyStateEl.classList.add('hidden');
       agentOutEl.textContent = '';
       rawEventsEl.textContent = '';
+      document.getElementById('recovery-panel').classList.add('hidden');
       scannedVulns = [];
+      baselineTests = [];
       clearChat();
       currentRunId = null;
       overallIcon.innerHTML = ICONS.running;
@@ -752,7 +1175,7 @@
             evtSource.close();
             await finishRun(runId);
             runBtn.disabled = false;
-            runBtn.textContent = 'Run AutoSec';
+            runBtn.querySelector('span').textContent = 'Run AutoSec';
             return;
           }
           handleEvent(evt);
@@ -762,12 +1185,11 @@
         overallTitle.textContent = 'Failed to start';
         overallSub.textContent = err.message;
         runBtn.disabled = false;
-        runBtn.textContent = 'Run AutoSec';
+        runBtn.querySelector('span').textContent = 'Run AutoSec';
         stopTicker();
       }
     });
 
-    // -------- empty state / examples --------
     const emptyStateEl = document.getElementById('empty-state');
     const exampleChipsEl = document.getElementById('example-chips');
     const EXAMPLES = [
@@ -777,8 +1199,8 @@
     for (const ex of EXAMPLES) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = 'text-xs text-slate-200 bg-slate-800/60 hover:bg-slate-700 border border-slate-700 rounded-full px-3 py-1 transition mono';
-      b.textContent = ex.label;
+      b.className = 'chip text-[12px] rounded-full px-3 py-1.5 mono';
+      b.innerHTML = `<span class="text-ink-400">↗</span> <span class="ml-1">${ex.label}</span>`;
       b.addEventListener('click', () => {
         document.getElementById('repoUrl').value = ex.url;
         document.getElementById('target').value = ex.target;
@@ -786,14 +1208,13 @@
       exampleChipsEl.appendChild(b);
     }
 
-    // Initial render of suggestions
     renderSuggestions();
 
     // -------- mobile drawer toggle --------
     const chatAside = document.getElementById('chat-aside');
     const chatFab = document.getElementById('chat-fab');
     const chatClose = document.getElementById('chat-close');
-    const MOBILE_DRAWER_CLASSES = ['fixed','inset-y-0','right-0','z-40','w-full','sm:w-[420px]','bg-slate-950','shadow-2xl','p-4'];
+    const MOBILE_DRAWER_CLASSES = ['fixed','inset-y-0','right-0','z-40','w-full','sm:w-[420px]','bg-white','shadow-2xl','p-4'];
 
     function openMobileChat() {
       chatAside.classList.remove('hidden');
@@ -806,7 +1227,6 @@
     chatFab.addEventListener('click', openMobileChat);
     chatClose.addEventListener('click', closeMobileChat);
     window.addEventListener('resize', () => {
-      // Reset state when crossing the lg breakpoint
       if (window.innerWidth >= 1024) {
         MOBILE_DRAWER_CLASSES.forEach(c => chatAside.classList.remove(c));
         chatAside.classList.remove('hidden');

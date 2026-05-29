@@ -21,9 +21,9 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   const repoDir = path.join(root, 'repo');
   const log = makeLogger(onLog);
 
-  const sshUrl = repoUrl.replace(/^https:\/\/github\.com\/(.+?)(?:\.git)?$/, 'git@github.com:$1.git');
-  log('clone', { repoUrl: sshUrl, repoDir });
-  await exec('git', ['clone', '--depth', '50', sshUrl, repoDir]);
+  const cloneUrl = repoUrl.replace(/^git@github\.com:(.+?)(?:\.git)?$/, 'https://github.com/$1.git');
+  log('clone', { repoUrl: cloneUrl, repoDir });
+  await exec('git', ['clone', '--depth', '50', cloneUrl, repoDir]);
   await configurePushAuth(repoDir);
   await exec('git', ['config', 'user.name', process.env.GIT_AUTHOR_NAME || 'AutoSec Bot'], { cwd: repoDir });
   await exec('git', ['config', 'user.email', process.env.GIT_AUTHOR_EMAIL || 'autosec@example.invalid'], { cwd: repoDir });
@@ -31,7 +31,15 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   log('npm-install');
   const npmArgs = ['install', '--no-audit', '--no-fund', `--cache=${path.join(root, 'npm-cache')}`];
   if (process.env.AUTOSEC_NPM_REGISTRY) npmArgs.push(`--registry=${process.env.AUTOSEC_NPM_REGISTRY}`);
-  await exec('npm', npmArgs, { cwd: repoDir, maxBuffer: 50 * 1024 * 1024 });
+  try {
+    await exec('npm', npmArgs, { cwd: repoDir, maxBuffer: 50 * 1024 * 1024 });
+  } catch (err) {
+    // Native postinstalls (canvas, sharp, node-sass) often fail on bleeding-edge Node.
+    // npm audit only needs the lockfile + node_modules tree — not the compiled binaries.
+    // Retry with --ignore-scripts so we can still scan.
+    log('npm-install.retry', { reason: 'install failed, retrying with --ignore-scripts', error: shortErr(err) });
+    await exec('npm', [...npmArgs, '--ignore-scripts'], { cwd: repoDir, maxBuffer: 50 * 1024 * 1024 });
+  }
 
   // Detect the required node version from installed node_modules, then reinstall
   // with the correct node if it differs from the current one so native bindings match.
@@ -39,7 +47,12 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   if (nodeEnv !== process.env) {
     const { rm: rmDir } = await import('node:fs/promises');
     await rmDir(path.join(repoDir, 'node_modules'), { recursive: true, force: true });
-    await exec('npm', npmArgs, { cwd: repoDir, env: nodeEnv, maxBuffer: 50 * 1024 * 1024 });
+    try {
+      await exec('npm', npmArgs, { cwd: repoDir, env: nodeEnv, maxBuffer: 50 * 1024 * 1024 });
+    } catch (err) {
+      log('npm-install.retry', { reason: 'reinstall failed, retrying with --ignore-scripts', error: shortErr(err) });
+      await exec('npm', [...npmArgs, '--ignore-scripts'], { cwd: repoDir, env: nodeEnv, maxBuffer: 50 * 1024 * 1024 });
+    }
   }
 
   log('scan');
@@ -86,7 +99,7 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
 
   log('baseline');
   const baselineResult = await verify(repoDir, { env: nodeEnv });
-  log('baseline.result', { pass: baselineResult.pass, output: baselineResult.output });
+  log('baseline.result', { pass: baselineResult.pass, output: baselineResult.output, tests: baselineResult.tests || [] });
 
   if (dryRun) {
     return { runId, status: 'dry-run', target, ctxSummary: summarizeCtx(ctx), baseline: baselineResult };
@@ -106,7 +119,13 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
 
   log('verify');
   const testResult = await verify(repoDir, { env: nodeEnv });
-  log('verify.result', { pass: testResult.pass, baselinePass: baselineResult.pass, output: testResult.output });
+  log('verify.result', {
+    pass: testResult.pass,
+    baselinePass: baselineResult.pass,
+    output: testResult.output,
+    tests: testResult.tests || [],
+    baselineTests: baselineResult.tests || [],
+  });
 
   // Only treat test failure as a regression if baseline was passing.
   const testsRegressed = !testResult.pass && baselineResult.pass;
@@ -241,6 +260,11 @@ function summarizeCtx(ctx) {
     changelog: { source: ctx.changelog.source, notes: ctx.changelog.notes, chars: ctx.changelog.text.length },
     repoMeta: ctx.repoMeta,
   };
+}
+
+function shortErr(err) {
+  const m = String(err?.message || err || '');
+  return m.length > 400 ? m.slice(0, 400) + '…' : m;
 }
 
 function makeLogger(onLog) {
