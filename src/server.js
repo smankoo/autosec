@@ -57,6 +57,17 @@ function pushEvent(run, evt) {
   }
 }
 
+function postFixNote(verifyData) {
+  if (!verifyData) return 'unknown';
+  if (verifyData.pass) return 'PASSED';
+  const label = verifyData.classification?.label;
+  if (label === 'environment-broken') return 'FAILED (environment broken — not caused by this bump)';
+  if (label === 'pre-existing-failure') return 'FAILED (pre-existing — baseline also failing)';
+  if (label === 'regression') return 'FAILED (regression introduced by this bump)';
+  // Fall back to old heuristic when no classification was attached.
+  return verifyData.baselinePass ? 'FAILED (regression)' : 'FAILED (pre-existing)';
+}
+
 function writeManifest(run) {
   // Exclude agent.chunk events — content is in agent.txt
   const events = run.events.filter((e) => e.stage !== 'agent.chunk');
@@ -83,8 +94,11 @@ function writeManifest(run) {
   if (baseline?.data) lines.push(`Baseline tests: ${baseline.data.pass ? 'PASSED' : 'FAILED'}`);
   const verify = events.find((e) => e.stage === 'verify.result');
   if (verify?.data) {
-    const note = !verify.data.pass ? (verify.data.baselinePass ? 'FAILED (regression)' : 'FAILED (pre-existing)') : 'PASSED';
+    const note = postFixNote(verify.data);
     lines.push(`Post-fix tests: ${note}`);
+    if (verify.data.classification?.reason && verify.data.classification.label !== 'pass') {
+      lines.push(`  Reason: ${verify.data.classification.reason}`);
+    }
   }
   if (run.result?.pr?.branch) lines.push(`Branch: ${run.result.pr.branch}`);
   if (run.result?.pr?.url) lines.push(`PR: ${run.result.pr.url}`);
@@ -155,12 +169,10 @@ function buildRunContext(run) {
       lines.push(`- Baseline (pre-fix): ${baselineEvt.data.pass ? 'PASSED' : 'FAILED'}`);
     }
     if (verifyEvt?.data) {
-      const baselinePassed = baselineEvt?.data?.pass ?? true;
-      const postFixPassed = verifyEvt.data.pass;
-      const note = !postFixPassed
-        ? (baselinePassed ? 'FAILED (regression)' : 'FAILED (pre-existing)')
-        : 'PASSED';
-      lines.push(`- Post-fix: ${note}`);
+      lines.push(`- Post-fix: ${postFixNote(verifyEvt.data)}`);
+      if (verifyEvt.data.classification?.reason && verifyEvt.data.classification.label !== 'pass') {
+        lines.push(`  Reason: ${verifyEvt.data.classification.reason}`);
+      }
     }
     lines.push('');
   }

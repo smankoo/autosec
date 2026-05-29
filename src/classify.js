@@ -42,6 +42,22 @@ function detectEnvironmentBreakage(output) {
     };
   }
 
+  // Missing peer/transitive package the agent's install dropped. Common when
+  // the agent uses --legacy-peer-deps (which we explicitly forbid) or when a
+  // peer dep is silently omitted. Same shape as missing native binding: the
+  // runner crashes during loader, not during assertions.
+  const moduleMissing = text.match(/Cannot find module ['"]([^'"]+)['"]/);
+  if (moduleMissing && !moduleMissing[1].endsWith('.node')) {
+    const m = moduleMissing[1];
+    if (/^(@testing-library\/|jest-|@jest\/|@types\/|@swc\/|@babel\/|babel-|ts-jest|ts-node|tsx)/.test(m)) {
+      return {
+        matched: true,
+        reason: `Test runner cannot resolve "${m}" — peer/transitive package is missing from node_modules`,
+        hint: `Likely the install dropped this peer dep (e.g. via --legacy-peer-deps). Re-run install without that flag, or include the peer in the bump set.`,
+      };
+    }
+  }
+
   // Generic "test suite failed to run" with no actual assertions executed.
   // Jest signals this with "Test suite failed to run" + "Tests: 0 total".
   if (/Test suite failed to run/i.test(text) && /Tests:\s+0 total/.test(text)) {

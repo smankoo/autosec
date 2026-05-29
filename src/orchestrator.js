@@ -20,11 +20,22 @@ import {
 
 const exec = promisify(execFile);
 
-export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targetPkg, push = true, onLog, selectTargets }) {
+export async function run(opts) {
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const root = path.join(os.tmpdir(), 'autosec-runs', runId);
   await mkdir(root, { recursive: true });
   const repoDir = path.join(root, 'repo');
+  try {
+    return await runImpl({ ...opts, runId, root, repoDir });
+  } finally {
+    // Free disk after every run, success or failure. node_modules is by far
+    // the heaviest part — it's already in the persistent cache.
+    try { await rm(path.join(repoDir, 'node_modules'), { recursive: true, force: true }); } catch {}
+    try { await rm(path.join(root, 'native-snapshot'), { recursive: true, force: true }); } catch {}
+  }
+}
+
+async function runImpl({ repoUrl, dryRun, maxIters, branchBase, target: targetPkg, push = true, onLog, selectTargets, runId, root, repoDir }) {
   const log = makeLogger(onLog);
 
   const { httpsUrl, sshUrl } = normalizeRepoUrls(repoUrl);
@@ -50,17 +61,55 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   const npmArgs = [installCmd, '--no-audit', '--no-fund', npmCacheArg];
   if (process.env.AUTOSEC_NPM_REGISTRY) npmArgs.push(`--registry=${process.env.AUTOSEC_NPM_REGISTRY}`);
 
-  const cacheKey = await nodeModulesCacheKey(repoDir, nodeBinHint);
-  let cacheHit = cacheKey ? await restoreNodeModules(cacheKey, repoDir) : false;
+  // We may end up running on a different Node than `nodeEnv` if the install
+  // hits a V8 ABI mismatch and we automatically fall back to an LTS.
+  let activeNodeEnv = nodeEnv;
+  let activeCacheKey = await nodeModulesCacheKey(repoDir, nodeBinHint);
+  let cacheHit = activeCacheKey ? await restoreNodeModules(activeCacheKey, repoDir) : false;
   if (cacheHit) {
-    log('npm-install.cache-hit', { key: cacheKey });
+    log('npm-install.cache-hit', { key: activeCacheKey });
   } else {
-    await runInstall(npmArgs, { cwd: repoDir, env: nodeEnv }, log);
-    if (cacheKey) {
-      const cached = await snapshotNodeModules(cacheKey, repoDir);
-      if (cached) log('npm-install.cache-store', { key: cacheKey });
+    let install = await runInstall(npmArgs, { cwd: repoDir, env: activeNodeEnv }, log);
+
+    // Auto-fallback: if native postinstalls failed in a way that smells like
+    // a Node ABI mismatch AND the repo didn't pin a Node version, the host
+    // Node is probably too new. Retry on Node 20 LTS (then 18 if that also
+    // fails). Only happens once — we don't loop.
+    const repoPinsNode = activeNodeEnv !== process.env;
+    if (install.usedIgnoreScripts && install.abiMismatch && !repoPinsNode) {
+      const FALLBACKS = ['20', '18'];
+      for (const v of FALLBACKS) {
+        log('npm-install.node-fallback', { trying: v, reason: 'native build error suggests host Node is too new' });
+        const fbEnv = await nvmEnvFor(v, log, { reason: 'abi-fallback' });
+        if (!fbEnv) continue;
+        const fbBin = (fbEnv.PATH || '').split(':')[0];
+        // Wipe the bad tree before retrying.
+        try { await rm(path.join(repoDir, 'node_modules'), { recursive: true, force: true }); } catch {}
+        const fbKey = await nodeModulesCacheKey(repoDir, fbBin);
+        const fbHit = fbKey ? await restoreNodeModules(fbKey, repoDir) : false;
+        if (fbHit) {
+          log('npm-install.cache-hit', { key: fbKey, node: v });
+          activeNodeEnv = fbEnv; activeCacheKey = fbKey; install = { usedIgnoreScripts: false, abiMismatch: false };
+          break;
+        }
+        const fbInstall = await runInstall(npmArgs, { cwd: repoDir, env: fbEnv }, log);
+        if (!fbInstall.usedIgnoreScripts) {
+          activeNodeEnv = fbEnv; activeCacheKey = fbKey; install = fbInstall;
+          break;
+        }
+        // still bad — keep trying older LTS
+      }
+    }
+
+    if (activeCacheKey && !install.usedIgnoreScripts) {
+      const cached = await snapshotNodeModules(activeCacheKey, repoDir);
+      if (cached) log('npm-install.cache-store', { key: activeCacheKey });
+    } else if (activeCacheKey && install.usedIgnoreScripts) {
+      log('npm-install.cache-skip', { key: activeCacheKey, reason: 'install used --ignore-scripts; tree may be missing native bindings' });
     }
   }
+  // From here on, run downstream steps under the Node we ended up using.
+  const finalNodeEnv = activeNodeEnv;
 
   log('scan');
   const vulns = await scan(repoDir);
@@ -125,7 +174,7 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   }
 
   log('baseline');
-  const baselineResult = await verify(repoDir, { env: nodeEnv });
+  const baselineResult = await verify(repoDir, { env: finalNodeEnv });
   log('baseline.result', { pass: baselineResult.pass, output: baselineResult.output, tests: baselineResult.tests || [] });
 
   if (dryRun) {
@@ -157,7 +206,7 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   if (restored.length) log('native.restore', { restored });
 
   log('verify');
-  const testResult = await verify(repoDir, { env: nodeEnv });
+  const testResult = await verify(repoDir, { env: finalNodeEnv });
   const verdict = classifyVerify({ baseline: baselineResult, verify: testResult });
   log('verify.result', {
     pass: testResult.pass,
@@ -169,10 +218,15 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
     nativeRestored: restored,
   });
 
-  // Only the "regression" verdict actually blocks: pre-existing or env-broken
-  // failures aren't caused by the bump.
+  // The verify result is the source of truth, not the agent's self-report.
+  // The agent runs `npm test` mid-run and may report `partial` because its
+  // in-flight test crashed on a missing native binding — but we restore those
+  // bindings after the agent exits and re-verify. If our verify says pass,
+  // the run succeeded regardless of how the agent felt about it.
   const testsRegressed = verdict.label === 'regression';
-  const draft = testsRegressed || summary.status !== 'success';
+  const trustVerify = verdict.label === 'pass';
+  const agentFailed = summary.status === 'failed';
+  const draft = testsRegressed || (!trustVerify && agentFailed);
   log('pr.open', { draft, push });
   const pr = await openPR({
     repoDir,
@@ -200,9 +254,6 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
 }
 
 async function resolveNodeEnv(repoDir, log) {
-  const NVM_SH = path.join(os.homedir(), '.nvm', 'nvm.sh');
-  if (!existsSync(NVM_SH)) return process.env;
-
   let version;
 
   // 1. .nvmrc / .node-version
@@ -223,7 +274,17 @@ async function resolveNodeEnv(repoDir, log) {
   }
 
   if (!version) return process.env;
+  return await nvmEnvFor(version, log) || process.env;
+}
 
+/**
+ * Use nvm to install (if needed) and locate a specific Node version.
+ * Returns an env with PATH prepended to point at that version's bin dir,
+ * or null if nvm isn't available or the install fails.
+ */
+async function nvmEnvFor(version, log, { reason } = {}) {
+  const NVM_SH = path.join(os.homedir(), '.nvm', 'nvm.sh');
+  if (!existsSync(NVM_SH)) return null;
   try {
     const { stdout } = await exec('/bin/bash', ['-c',
       `source "${NVM_SH}" --no-use && nvm install "${version}" --no-progress > /dev/null 2>&1 && nvm which "${version}"`,
@@ -231,12 +292,11 @@ async function resolveNodeEnv(repoDir, log) {
     const nodePath = stdout.trim().split('\n').pop().trim();
     const nodeBin = path.dirname(nodePath);
     if (nodeBin && nodeBin !== '.') {
-      log('node-version', { requested: version, bin: nodeBin });
+      log('node-version', { requested: version, bin: nodeBin, reason: reason || 'repo-pinned' });
       return { ...process.env, PATH: `${nodeBin}:${process.env.PATH}` };
     }
   } catch {}
-
-  return process.env;
+  return null;
 }
 
 function minVersionFromRange(range) {
@@ -337,11 +397,13 @@ async function runInstall(npmArgs, opts, log) {
   // 1. If `npm ci` fails because the lockfile is out of sync, retry with
   //    `npm install` (which will rewrite the lockfile).
   // 2. If postinstalls fail (native build errors), retry with --ignore-scripts.
+  // Returns { usedIgnoreScripts, abiMismatch, lastError } so callers can
+  // decide whether to retry on a different Node version or skip caching.
   const isCi = npmArgs[0] === 'ci';
   const env = { ...(opts.env || process.env), maxBuffer: 50 * 1024 * 1024 };
   try {
     await exec('npm', npmArgs, { ...opts, env, maxBuffer: 50 * 1024 * 1024 });
-    return;
+    return { usedIgnoreScripts: false, abiMismatch: false };
   } catch (err) {
     const msg = String(err.stderr || err.message || '');
     if (isCi && /can only install packages when your package\.json and package-lock\.json/.test(msg)) {
@@ -349,16 +411,34 @@ async function runInstall(npmArgs, opts, log) {
       const fallback = ['install', ...npmArgs.slice(1)];
       try {
         await exec('npm', fallback, { ...opts, env, maxBuffer: 50 * 1024 * 1024 });
-        return;
+        return { usedIgnoreScripts: false, abiMismatch: false };
       } catch (err2) {
+        const m2 = String(err2.stderr || err2.message || '');
         log('npm-install.retry', { reason: 'npm install failed, retrying with --ignore-scripts', error: shortErr(err2) });
         await exec('npm', [...fallback, '--ignore-scripts'], { ...opts, env, maxBuffer: 50 * 1024 * 1024 });
-        return;
+        return { usedIgnoreScripts: true, abiMismatch: looksLikeAbiError(m2), lastError: m2 };
       }
     }
     log('npm-install.retry', { reason: 'install failed, retrying with --ignore-scripts', error: shortErr(err) });
     await exec('npm', [...npmArgs, '--ignore-scripts'], { ...opts, env, maxBuffer: 50 * 1024 * 1024 });
+    return { usedIgnoreScripts: true, abiMismatch: looksLikeAbiError(msg), lastError: msg };
   }
+}
+
+/**
+ * Heuristic: did the failed install look like a Node ABI / V8 incompatibility?
+ * (vs. e.g. a missing system library, peer-dep conflict, or registry error)
+ * If yes, retrying on a different Node version is a reasonable response.
+ */
+function looksLikeAbiError(msg) {
+  if (!msg) return false;
+  return (
+    /no member named ['"]?(IdleNotificationDeadline|SetAccessor)['"]?/i.test(msg) ||
+    /no matching constructor for initialization of ['"]?v8::(ScriptOrigin|NamedPropertyHandlerConfiguration|IndexedPropertyHandlerConfiguration)['"]?/i.test(msg) ||
+    /node-pre-gyp WARN[\s\S]*Pre-built binaries not installable/i.test(msg) ||
+    /NODE_MODULE_VERSION\s+\d+/.test(msg) ||
+    /nan\.h:\d+:\d+:\s*error/i.test(msg)
+  );
 }
 
 function shortErr(err) {
