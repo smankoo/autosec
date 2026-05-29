@@ -62,7 +62,7 @@ async function buildPrompt({ targets, contexts, maxIters }) {
   lines.push('```');
   lines.push('');
   if (!testCommand) {
-    lines.push('If the test command is empty, stop immediately and emit `status: failed` with note `no test command — refusing to operate without an oracle`.');
+    lines.push('If the test command is empty, stop immediately and emit `status: failed` with note `no test command — refusing to operate without a test suite to verify the change`.');
     lines.push('');
   }
 

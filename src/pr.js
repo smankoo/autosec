@@ -7,7 +7,7 @@ const exec = promisify(execFile);
 /**
  * Branch, commit, push, and open a PR. Returns { url, branch, draft }.
  */
-export async function openPR({ repoDir, vuln, targets, ctx, contexts, summary, testResult, baselineResult, branchBase, draft, push = true, verdict }) {
+export async function openPR({ repoDir, vuln, targets, ctx, contexts, summary, testResult, baselineResult, branchBase, draft, push = true, verdict, rescan }) {
   // Back-compat: single-vuln callers may pass {vuln} instead of {targets}.
   if (!targets) targets = vuln ? [vuln] : [];
   const isMulti = targets.length > 1;
@@ -17,7 +17,7 @@ export async function openPR({ repoDir, vuln, targets, ctx, contexts, summary, t
   const title = isMulti
     ? `autosec: bump ${targets.length} dependencies (${highestSeverity(targets)})`
     : `autosec: bump ${targets[0].package} to ${targets[0].fixed} (${targets[0].severity})`;
-  const body = renderBody({ targets, ctx, contexts, summary, testResult, baselineResult, verdict });
+  const body = renderBody({ targets, ctx, contexts, summary, testResult, baselineResult, verdict, rescan });
 
   await git(repoDir, ['checkout', '-B', branch]);
   await git(repoDir, ['add', '-A']);
@@ -93,7 +93,7 @@ function shortHash(s) {
   return Math.abs(h).toString(36).slice(0, 6);
 }
 
-function renderBody({ targets, ctx, contexts, summary, testResult, baselineResult, verdict }) {
+function renderBody({ targets, ctx, contexts, summary, testResult, baselineResult, verdict, rescan }) {
   const tail = (testResult?.output || '').split('\n').slice(-60).join('\n');
   const baselinePassed = baselineResult?.pass ?? true;
   const verdictLabel = verdict?.label || (testResult?.pass ? 'pass' : (baselinePassed ? 'regression' : 'pre-existing-failure'));
@@ -149,6 +149,14 @@ function renderBody({ targets, ctx, contexts, summary, testResult, baselineResul
     verdict?.reason ? `- **Verdict reason:** ${verdict.reason}` : null,
     verdict?.hint ? `- **Hint:** ${verdict.hint}` : null,
     ``,
+    rescan ? `### Vulnerability scan delta
+
+- **Closed:** ${rescan.fixed?.length || 0}
+- **Persisted:** ${rescan.persisted?.length || 0}${rescan.targetedAndStillPresent?.length ? ` (incl. ${rescan.targetedAndStillPresent.length} that this run targeted but didn't fix)` : ''}
+- **Introduced:** ${rescan.introduced?.length || 0}${rescan.introduced?.length ? `
+
+  ${rescan.introduced.map((v) => `- \`${v.package}\` ${v.severity}${v.title ? ` — ${v.title}` : ''}`).join('\n  ')}` : ''}` : null,
+    rescan ? `` : null,
     `### Test output (tail)`,
     ``,
     '```',

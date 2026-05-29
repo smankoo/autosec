@@ -200,7 +200,12 @@ async function runImpl({ repoUrl, dryRun, maxIters, branchBase, target: targetPk
       ? ({ stream, text }) => onLog({ ts: new Date().toISOString(), stage: 'agent.chunk', data: { stream, text } })
       : undefined,
   });
-  log('agent.done', { status: summary.status });
+  log('agent.done', {
+    status: summary.status,
+    migrationNotes: summary.migration_notes || null,
+    filesTouched: summary.files_touched || [],
+    packages: summary.packages || [],
+  });
 
   const restored = await restoreMissingNatives(repoDir, snapshotDir);
   if (restored.length) log('native.restore', { restored });
@@ -216,6 +221,34 @@ async function runImpl({ repoUrl, dryRun, maxIters, branchBase, target: targetPk
     baselineTests: baselineResult.tests || [],
     classification: verdict,
     nativeRestored: restored,
+  });
+
+  // Re-scan after the bumps to confirm the targeted vulns are gone and that
+  // no new ones snuck in. Compares against the pre-bump scan.
+  log('rescan');
+  let postVulns = [];
+  try {
+    postVulns = await scan(repoDir);
+  } catch (err) {
+    log('rescan.error', { message: shortErr(err) });
+  }
+  const vulnDiff = diffVulns(vulns, postVulns, targets);
+  log('rescan.result', {
+    countBefore: vulns.length,
+    countAfter: postVulns.length,
+    vulns: postVulns.map((v) => ({
+      package: v.package,
+      severity: v.severity,
+      current: v.current,
+      fixed: v.fixed,
+      isMajorBump: v.isMajorBump,
+      title: v.title,
+      advisoryUrl: v.advisoryUrl,
+    })),
+    fixed: vulnDiff.fixed,
+    persisted: vulnDiff.persisted,
+    introduced: vulnDiff.introduced,
+    targetedAndStillPresent: vulnDiff.targetedAndStillPresent,
   });
 
   // The verify result is the source of truth, not the agent's self-report.
@@ -240,6 +273,7 @@ async function runImpl({ repoUrl, dryRun, maxIters, branchBase, target: targetPk
     draft,
     push,
     verdict,
+    rescan: vulnDiff,
   });
 
   return {
@@ -439,6 +473,32 @@ function looksLikeAbiError(msg) {
     /NODE_MODULE_VERSION\s+\d+/.test(msg) ||
     /nan\.h:\d+:\d+:\s*error/i.test(msg)
   );
+}
+
+function diffVulns(before, after, targets) {
+  // Identity = (package, severity, advisoryUrl). advisoryUrl gives the most
+  // unique pin; if it's missing we fall back to (package, severity).
+  const id = (v) => `${v.package}|${v.severity}|${v.advisoryUrl || ''}`;
+  const beforeMap = new Map(before.map((v) => [id(v), v]));
+  const afterMap = new Map(after.map((v) => [id(v), v]));
+  const fixed = before.filter((v) => !afterMap.has(id(v))).map(slimVuln);
+  const persisted = before.filter((v) => afterMap.has(id(v))).map(slimVuln);
+  const introduced = after.filter((v) => !beforeMap.has(id(v))).map(slimVuln);
+  const targetSet = new Set((targets || []).map((t) => t.package));
+  const targetedAndStillPresent = persisted.filter((v) => targetSet.has(v.package));
+  return { fixed, persisted, introduced, targetedAndStillPresent };
+}
+
+function slimVuln(v) {
+  return {
+    package: v.package,
+    severity: v.severity,
+    current: v.current,
+    fixed: v.fixed,
+    isMajorBump: v.isMajorBump,
+    title: v.title,
+    advisoryUrl: v.advisoryUrl,
+  };
 }
 
 function shortErr(err) {

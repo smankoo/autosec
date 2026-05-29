@@ -15,7 +15,7 @@ Bump **{{package}}** from `{{current}}` to `{{fixed}}` in this repository, and f
 {{testCommand}}
 ```
 
-If this is empty, stop immediately and emit `status: failed` with note `no test command — refusing to operate without an oracle`.
+If this is empty, stop immediately and emit `status: failed` with note `no test command — refusing to operate without a test suite to verify the change`.
 
 ## Call sites in this repo
 
