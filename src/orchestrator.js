@@ -11,6 +11,8 @@ import { gatherContext } from './context.js';
 import { runAgent } from './agent.js';
 import { verify } from './verify.js';
 import { openPR } from './pr.js';
+import { snapshotNatives, restoreMissingNatives } from './nativeSnapshot.js';
+import { classifyVerify } from './classify.js';
 
 const exec = promisify(execFile);
 
@@ -21,9 +23,8 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   const repoDir = path.join(root, 'repo');
   const log = makeLogger(onLog);
 
-  const cloneUrl = repoUrl.replace(/^git@github\.com:(.+?)(?:\.git)?$/, 'https://github.com/$1.git');
-  log('clone', { repoUrl: cloneUrl, repoDir });
-  await exec('git', ['clone', '--depth', '50', cloneUrl, repoDir]);
+  const { httpsUrl, sshUrl } = normalizeRepoUrls(repoUrl);
+  const cloneUrl = await cloneWithFallback({ httpsUrl, sshUrl, repoDir, log });
   await configurePushAuth(repoDir);
   await exec('git', ['config', 'user.name', process.env.GIT_AUTHOR_NAME || 'AutoSec Bot'], { cwd: repoDir });
   await exec('git', ['config', 'user.email', process.env.GIT_AUTHOR_EMAIL || 'autosec@example.invalid'], { cwd: repoDir });
@@ -105,6 +106,15 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
     return { runId, status: 'dry-run', target, ctxSummary: summarizeCtx(ctx), baseline: baselineResult };
   }
 
+  // Snapshot native bindings (.node files) before the agent runs. Many bumps
+  // refresh package-lock and re-extract tarballs, which strips the compiled
+  // binary on hosts where it can't be rebuilt (canvas, sharp, etc.). Restoring
+  // these afterward keeps the test environment intact so we can actually
+  // judge whether the bump caused regressions.
+  const snapshotDir = path.join(root, 'native-snapshot');
+  const snap = await snapshotNatives(repoDir, snapshotDir);
+  log('native.snapshot', { count: snap.count });
+
   log('agent.start');
   const { transcript, summary } = await runAgent({
     repoDir,
@@ -117,18 +127,25 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   });
   log('agent.done', { status: summary.status });
 
+  const restored = await restoreMissingNatives(repoDir, snapshotDir);
+  if (restored.length) log('native.restore', { restored });
+
   log('verify');
   const testResult = await verify(repoDir, { env: nodeEnv });
+  const verdict = classifyVerify({ baseline: baselineResult, verify: testResult });
   log('verify.result', {
     pass: testResult.pass,
     baselinePass: baselineResult.pass,
     output: testResult.output,
     tests: testResult.tests || [],
     baselineTests: baselineResult.tests || [],
+    classification: verdict,
+    nativeRestored: restored,
   });
 
-  // Only treat test failure as a regression if baseline was passing.
-  const testsRegressed = !testResult.pass && baselineResult.pass;
+  // Only the "regression" verdict actually blocks: pre-existing or env-broken
+  // failures aren't caused by the bump.
+  const testsRegressed = verdict.label === 'regression';
   const draft = testsRegressed || summary.status !== 'success';
   log('pr.open', { draft, push });
   const pr = await openPR({
@@ -141,6 +158,7 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
     branchBase,
     draft,
     push,
+    verdict,
   });
 
   return {
@@ -230,6 +248,63 @@ function cmpVersion(a, b) {
     if (a[i] !== b[i]) return a[i] - b[i];
   }
   return 0;
+}
+
+function normalizeRepoUrls(input) {
+  // Accept either "https://github.com/owner/repo[.git]" or "git@github.com:owner/repo[.git]".
+  let owner, repo;
+  let m = input.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  if (m) { owner = m[1]; repo = m[2]; }
+  else {
+    m = input.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/);
+    if (m) { owner = m[1]; repo = m[2]; }
+  }
+  if (!owner) {
+    // Fallback: trust caller, return the input as both — git will pick whichever works.
+    return { httpsUrl: input, sshUrl: input };
+  }
+  return {
+    httpsUrl: `https://github.com/${owner}/${repo}.git`,
+    sshUrl: `git@github.com:${owner}/${repo}.git`,
+  };
+}
+
+async function cloneWithFallback({ httpsUrl, sshUrl, repoDir, log }) {
+  // Prefer the scheme that has matching credentials configured. If a GitHub
+  // token is available, https will work non-interactively; otherwise try ssh
+  // first since the user likely has an SSH key. Either way, fall back on
+  // failure so it Just Works on machines configured for the other scheme.
+  const hasToken = !!(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || (await ghAuthToken()));
+  const order = hasToken ? [httpsUrl, sshUrl] : [sshUrl, httpsUrl];
+  let firstErr;
+  for (const url of order) {
+    try {
+      log('clone', { repoUrl: url, repoDir });
+      // GIT_TERMINAL_PROMPT=0 prevents git from blocking on a username/password
+      // prompt when https creds are missing — it just fails fast so we can fall back.
+      // GIT_SSH_COMMAND with BatchMode=yes does the same for ssh (no host-key prompt).
+      const env = {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new',
+      };
+      await exec('git', ['clone', '--depth', '50', url, repoDir], { env });
+      return url;
+    } catch (e) {
+      firstErr = firstErr || e;
+      log('clone.retry', { failedUrl: url, error: shortErr(e) });
+      // Clean up partial clone before retry
+      try { await rm(repoDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+  throw new Error(`clone failed for both https and ssh: ${shortErr(firstErr)}`);
+}
+
+async function ghAuthToken() {
+  try {
+    const { stdout } = await exec('gh', ['auth', 'token']);
+    return stdout.trim() || null;
+  } catch { return null; }
 }
 
 async function configurePushAuth(repoDir) {

@@ -7,10 +7,10 @@ const exec = promisify(execFile);
 /**
  * Branch, commit, push, and open a PR. Returns { url, branch, draft }.
  */
-export async function openPR({ repoDir, vuln, ctx, summary, testResult, baselineResult, branchBase, draft, push = true }) {
+export async function openPR({ repoDir, vuln, ctx, summary, testResult, baselineResult, branchBase, draft, push = true, verdict }) {
   const branch = autosecBranchName(vuln);
   const title = `autosec: bump ${vuln.package} to ${vuln.fixed} (${vuln.severity})`;
-  const body = renderBody({ vuln, ctx, summary, testResult, baselineResult });
+  const body = renderBody({ vuln, ctx, summary, testResult, baselineResult, verdict });
 
   await git(repoDir, ['checkout', '-B', branch]);
   await git(repoDir, ['add', '-A']);
@@ -74,12 +74,17 @@ async function git(cwd, args) {
   return exec('git', args, { cwd });
 }
 
-function renderBody({ vuln, ctx, summary, testResult, baselineResult }) {
+function renderBody({ vuln, ctx, summary, testResult, baselineResult, verdict }) {
   const tail = (testResult?.output || '').split('\n').slice(-60).join('\n');
   const baselinePassed = baselineResult?.pass ?? true;
-  const testNote = !testResult?.pass
-    ? (baselinePassed ? 'FAILED (regression introduced by this bump)' : 'FAILED (pre-existing failures — baseline also failing)')
-    : 'PASSED';
+  const verdictLabel = verdict?.label || (testResult?.pass ? 'pass' : (baselinePassed ? 'regression' : 'pre-existing-failure'));
+  const verdictNote = {
+    pass:                   'PASSED',
+    regression:             'FAILED (regression introduced by this bump)',
+    'pre-existing-failure': 'FAILED (pre-existing failures — baseline also failing)',
+    'environment-broken':   'FAILED (test environment broken — not caused by this bump)',
+  }[verdictLabel] || 'FAILED';
+  const testNote = verdictNote;
   const meta = ctx.repoMeta;
   const repoLink = meta ? `https://github.com/${meta.owner}/${meta.repo}` : null;
   return [
@@ -108,6 +113,8 @@ function renderBody({ vuln, ctx, summary, testResult, baselineResult }) {
     ``,
     `- **Baseline (pre-fix):** ${baselinePassed ? 'PASSED' : 'FAILED'}`,
     `- **Post-fix:** ${testNote}`,
+    verdict?.reason ? `- **Verdict reason:** ${verdict.reason}` : null,
+    verdict?.hint ? `- **Hint:** ${verdict.hint}` : null,
     ``,
     `### Test output (tail)`,
     ``,

@@ -736,10 +736,29 @@
           const counts = countTests(tests);
           const baseTests = d.baselineTests || baselineTests || [];
           const diff = diffTests(baseTests, tests);
-          updateStepTitle('verify', d.pass ? `Tests pass${counts.summary ? ' — ' + counts.summary : ''}` : `Tests failed${counts.summary ? ' — ' + counts.summary : ''}`);
-          setStep('verify', d.pass ? 'done' : 'warn',
-                  d.pass ? 'Independent verification: green' : 'Tests did not pass — PR will be drafted as needs-human',
-                  testsExtraHtml(tests, d.output, 'verify', diff));
+          const cls = d.classification || { label: d.pass ? 'pass' : 'regression' };
+          const titleByLabel = {
+            pass:                 `Tests pass${counts.summary ? ' — ' + counts.summary : ''}`,
+            regression:           `Regression detected${counts.summary ? ' — ' + counts.summary : ''}`,
+            'pre-existing-failure': `Tests failed (pre-existing)${counts.summary ? ' — ' + counts.summary : ''}`,
+            'environment-broken': `Tests failed (environment broken)${counts.summary ? ' — ' + counts.summary : ''}`,
+          };
+          const stateByLabel = {
+            pass: 'done',
+            regression: 'warn',
+            'pre-existing-failure': 'warn',
+            'environment-broken': 'warn',
+          };
+          const detailByLabel = {
+            pass: 'Independent verification: green',
+            regression: 'Bump introduced a real regression — PR will be drafted as needs-human',
+            'pre-existing-failure': 'Tests were already failing before the bump — not blamed on this change',
+            'environment-broken': 'Test environment broke during the run — not caused by the bump',
+          };
+          updateStepTitle('verify', titleByLabel[cls.label] || titleByLabel.regression);
+          setStep('verify', stateByLabel[cls.label] || 'warn',
+                  detailByLabel[cls.label] || '',
+                  classificationCalloutHtml(cls, d.nativeRestored) + testsExtraHtml(tests, d.output, 'verify', diff));
           setStep('pr', 'running', 'Creating branch and committing…');
           break;
         }
@@ -842,6 +861,25 @@
         </li>
       `).join('');
       return `<ul class="divide-y divide-ink-100">${rows}</ul>`;
+    }
+
+    function classificationCalloutHtml(cls, nativeRestored) {
+      if (!cls || cls.label === 'pass') return '';
+      const palette = {
+        regression:            { bg: 'from-red-50 to-white',    border: 'border-red-200',    label: 'text-red-700',    title: 'Real regression' },
+        'pre-existing-failure':{ bg: 'from-amber-50 to-white',  border: 'border-amber-200',  label: 'text-amber-700',  title: 'Pre-existing failure' },
+        'environment-broken':  { bg: 'from-amber-50 to-white',  border: 'border-amber-200',  label: 'text-amber-700',  title: 'Environment broken — not caused by the bump' },
+      }[cls.label] || { bg: 'from-amber-50 to-white', border: 'border-amber-200', label: 'text-amber-700', title: cls.label };
+      const restoredNote = nativeRestored?.length
+        ? `<div class="text-[11px] text-ink-500 mt-2 pt-2 border-t border-ink-100">Restored ${nativeRestored.length} native binding${nativeRestored.length === 1 ? '' : 's'} after the agent's install: <code class="mono text-ink-700">${nativeRestored.slice(0,3).map(esc).join(', ')}${nativeRestored.length>3 ? `, +${nativeRestored.length-3} more` : ''}</code></div>`
+        : '';
+      return `
+        <div class="rounded-xl bg-gradient-to-br ${palette.bg} border ${palette.border} p-3.5 mb-2.5 text-[12.5px]">
+          <div class="text-[10px] uppercase tracking-[0.08em] ${palette.label} font-medium mb-1.5">${esc(palette.title)}</div>
+          <div class="text-ink-800">${esc(cls.reason || '')}</div>
+          ${cls.hint ? `<div class="text-[12px] text-ink-600 mt-1.5 leading-relaxed">${esc(cls.hint)}</div>` : ''}
+          ${restoredNote}
+        </div>`;
     }
 
     function testsExtraHtml(tests, output, kind, diff) {
