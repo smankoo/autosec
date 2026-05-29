@@ -33,7 +33,18 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
 
   log('scan');
   const vulns = await scan(repoDir);
-  log('scan.result', { count: vulns.length });
+  log('scan.result', {
+    count: vulns.length,
+    vulns: vulns.map((v) => ({
+      package: v.package,
+      severity: v.severity,
+      current: v.current,
+      fixed: v.fixed,
+      isMajorBump: v.isMajorBump,
+      title: v.title,
+      advisoryUrl: v.advisoryUrl,
+    })),
+  });
 
   let target;
   if (targetPkg) {

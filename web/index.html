@@ -8,20 +8,22 @@
   <style>
     body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .log-line { white-space: pre-wrap; word-break: break-word; }
-    .scroll-fade::after {
-      content: ''; position: sticky; bottom: 0; display: block; height: 24px;
-      background: linear-gradient(to bottom, rgba(2,6,23,0), rgba(2,6,23,1));
-      pointer-events: none; margin-top: -24px;
-    }
+    .step-enter { animation: stepIn 250ms ease-out; }
+    @keyframes stepIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin 800ms linear infinite; }
+    details > summary { list-style: none; cursor: pointer; }
+    details > summary::-webkit-details-marker { display: none; }
+    details[open] .chev { transform: rotate(90deg); }
+    .chev { transition: transform 150ms ease; }
   </style>
 </head>
 <body class="min-h-screen">
-  <div class="max-w-5xl mx-auto px-6 py-10">
+  <div class="max-w-4xl mx-auto px-6 py-10">
     <header class="mb-8 flex items-baseline gap-3">
       <h1 class="text-3xl font-semibold tracking-tight">AutoSec</h1>
       <span class="text-sm text-slate-400">autonomous dependency vulnerability remediation</span>
-      <span class="ml-auto text-xs text-slate-500 mono">UI runs are commit-local only · use the CLI to push / open PRs</span>
+      <span class="ml-auto text-xs text-slate-500 mono">UI runs are commit-local · push via CLI</span>
     </header>
 
     <section class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-lg">
@@ -45,47 +47,70 @@
         <div class="md:col-span-9 flex items-center gap-3">
           <label class="inline-flex items-center gap-2 text-sm text-slate-300">
             <input id="dryRun" type="checkbox" class="accent-indigo-500" />
-            Dry run (scan + triage + context only)
+            Dry run (scan only — no agent, no edits)
           </label>
         </div>
         <div class="md:col-span-3 flex justify-end">
           <button id="runBtn" type="submit"
-            class="bg-indigo-500 hover:bg-indigo-400 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-medium px-5 py-2 rounded-lg transition">
+            class="bg-indigo-500 hover:bg-indigo-400 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-medium px-5 py-2 rounded-lg transition w-full md:w-auto">
             Run AutoSec
           </button>
         </div>
       </form>
     </section>
 
-    <section id="status-card" class="hidden mt-6 bg-slate-900 border border-slate-800 rounded-2xl p-6">
-      <div class="flex items-center gap-3 mb-3">
-        <div id="status-dot" class="w-3 h-3 rounded-full bg-amber-400 animate-pulse"></div>
-        <h2 id="status-text" class="text-lg font-medium">Running…</h2>
-        <span id="run-id" class="ml-auto text-xs mono text-slate-500"></span>
-      </div>
-      <div id="stage-pills" class="flex flex-wrap gap-2 text-xs"></div>
-    </section>
-
-    <section class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl flex flex-col min-h-[400px] max-h-[70vh]">
-        <div class="px-5 py-3 border-b border-slate-800 flex items-center justify-between">
-          <h3 class="text-sm font-medium text-slate-200">Pipeline events</h3>
-          <button id="clear-events" class="text-xs text-slate-400 hover:text-slate-200">clear</button>
+    <section id="run-card" class="hidden mt-6 bg-slate-900 border border-slate-800 rounded-2xl p-6">
+      <div class="flex items-center gap-3 mb-5 pb-4 border-b border-slate-800">
+        <div id="overall-icon" class="shrink-0"></div>
+        <div class="flex-1 min-w-0">
+          <div id="overall-title" class="text-lg font-medium truncate">Starting run…</div>
+          <div id="overall-sub" class="text-sm text-slate-400 truncate"></div>
         </div>
-        <ol id="events" class="flex-1 overflow-y-auto px-5 py-3 mono text-xs space-y-1 scroll-fade"></ol>
-      </div>
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl flex flex-col min-h-[400px] max-h-[70vh]">
-        <div class="px-5 py-3 border-b border-slate-800 flex items-center justify-between">
-          <h3 class="text-sm font-medium text-slate-200">Agent output</h3>
-          <span class="text-xs text-slate-500">live stdout from claude -p</span>
+        <div class="text-right shrink-0">
+          <div id="elapsed" class="text-sm mono text-slate-300">0s</div>
+          <div id="run-id" class="text-xs mono text-slate-500"></div>
         </div>
-        <pre id="agent-output" class="flex-1 overflow-y-auto px-5 py-3 mono text-xs whitespace-pre-wrap text-slate-300"></pre>
       </div>
-    </section>
 
-    <section id="result-card" class="hidden mt-6 bg-slate-900 border border-slate-800 rounded-2xl p-6">
-      <h3 class="text-lg font-medium mb-4">Result</h3>
-      <div id="result-body" class="space-y-4 text-sm"></div>
+      <ol id="timeline" class="space-y-3"></ol>
+
+      <!-- ===== Chat ===== -->
+      <div id="chat-section" class="mt-6 border-t border-slate-800 pt-5">
+        <div class="flex items-center gap-2 mb-3">
+          <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+          <h3 class="text-sm font-medium text-slate-200">Ask about this run</h3>
+          <span class="ml-auto text-[11px] text-slate-500">grounded in this run's events, transcript, and result</span>
+        </div>
+        <div id="chat-messages" class="bg-slate-950 border border-slate-800 rounded-lg p-3 max-h-[50vh] overflow-y-auto space-y-3 text-sm"></div>
+        <div class="mt-3">
+          <div id="chat-suggestions" class="flex flex-wrap gap-1.5 mb-2"></div>
+          <form id="chat-form" class="flex gap-2">
+            <input id="chat-input" type="text" autocomplete="off"
+              placeholder="e.g. Why did the agent pick this version? What broke?"
+              class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <button id="chat-send" type="submit"
+              class="bg-indigo-500 hover:bg-indigo-400 disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+              Ask
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <details class="mt-6 group">
+        <summary class="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center gap-2">
+          <svg class="chev w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          Show agent transcript
+        </summary>
+        <pre id="agent-output" class="mt-3 bg-slate-950 border border-slate-800 rounded-lg p-4 mono text-xs whitespace-pre-wrap text-slate-300 max-h-[50vh] overflow-y-auto"></pre>
+      </details>
+
+      <details class="mt-2 group">
+        <summary class="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center gap-2">
+          <svg class="chev w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          Show raw events
+        </summary>
+        <pre id="raw-events" class="mt-3 bg-slate-950 border border-slate-800 rounded-lg p-4 mono text-[11px] whitespace-pre-wrap text-slate-400 max-h-[40vh] overflow-y-auto"></pre>
+      </details>
     </section>
 
     <footer class="mt-10 text-center text-xs text-slate-500">
@@ -94,155 +119,567 @@
   </div>
 
   <script>
+    // -------- icons --------
+    const ICONS = {
+      pending: '<svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2"/></svg>',
+      running: '<svg class="w-5 h-5 text-indigo-400 spinner" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2" stroke-dasharray="40 60"/></svg>',
+      done:    '<svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>',
+      warn:    '<svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 4h.01M5 19h14a2 2 0 001.84-2.75L13.74 4a2 2 0 00-3.48 0L3.16 16.25A2 2 0 005 19z"/></svg>',
+      error:   '<svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>',
+      skip:    '<svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>',
+    };
+
+    // -------- step definitions (narrative order) --------
+    const STEPS = [
+      { id: 'clone',    title: 'Cloning repository' },
+      { id: 'install',  title: 'Installing dependencies' },
+      { id: 'scan',     title: 'Scanning for vulnerabilities' },
+      { id: 'triage',   title: 'Selecting target vulnerability' },
+      { id: 'context',  title: 'Gathering migration context' },
+      { id: 'agent',    title: 'Agent applying the fix' },
+      { id: 'verify',   title: 'Running tests' },
+      { id: 'pr',       title: 'Preparing pull request' },
+    ];
+
+    // -------- DOM --------
     const form = document.getElementById('run-form');
     const runBtn = document.getElementById('runBtn');
-    const statusCard = document.getElementById('status-card');
-    const statusDot = document.getElementById('status-dot');
-    const statusText = document.getElementById('status-text');
-    const runIdEl = document.getElementById('run-id');
-    const stagePills = document.getElementById('stage-pills');
-    const eventsEl = document.getElementById('events');
+    const runCard = document.getElementById('run-card');
+    const timelineEl = document.getElementById('timeline');
     const agentOutEl = document.getElementById('agent-output');
-    const resultCard = document.getElementById('result-card');
-    const resultBody = document.getElementById('result-body');
-    const clearBtn = document.getElementById('clear-events');
+    const rawEventsEl = document.getElementById('raw-events');
+    const overallIcon = document.getElementById('overall-icon');
+    const overallTitle = document.getElementById('overall-title');
+    const overallSub = document.getElementById('overall-sub');
+    const elapsedEl = document.getElementById('elapsed');
+    const runIdEl = document.getElementById('run-id');
 
     let evtSource = null;
+    let startedAt = 0;
+    let ticker = null;
+    let dryRun = false;
+    let scannedVulns = [];
 
-    clearBtn.addEventListener('click', () => {
-      eventsEl.innerHTML = '';
-      agentOutEl.textContent = '';
-    });
-
-    const STAGE_ORDER = [
-      'queued','clone','npm-install','scan','scan.result','target','context','context.result',
-      'agent.start','agent.done','verify','verify.result','pr.open','done','error'
-    ];
-    const seenStages = new Set();
-
-    function setStatus(state) {
-      statusCard.classList.remove('hidden');
-      const map = {
-        running: ['bg-amber-400 animate-pulse','Running…'],
-        done:    ['bg-emerald-400','Completed'],
-        error:   ['bg-red-500','Failed'],
-      };
-      const [cls, label] = map[state] || map.running;
-      statusDot.className = 'w-3 h-3 rounded-full ' + cls;
-      statusText.textContent = label;
+    // -------- helpers --------
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function fmt(t) {
+      const s = Math.floor(t / 1000);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60), r = s % 60;
+      return `${m}m ${r}s`;
+    }
+    function sevColor(sev) {
+      return ({
+        critical: 'bg-red-500/20 text-red-300 border-red-500/40',
+        high: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
+        moderate: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+        low: 'bg-slate-500/20 text-slate-300 border-slate-500/40',
+        info: 'bg-slate-500/10 text-slate-400 border-slate-700',
+      }[sev] || 'bg-slate-500/10 text-slate-400 border-slate-700');
     }
 
-    function renderStagePills() {
-      stagePills.innerHTML = '';
-      for (const s of STAGE_ORDER) {
-        if (s === 'agent.chunk') continue;
-        const seen = seenStages.has(s);
-        const pill = document.createElement('span');
-        pill.className = 'px-2 py-0.5 rounded-full border ' +
-          (seen ? 'border-indigo-400 text-indigo-300 bg-indigo-500/10' : 'border-slate-700 text-slate-500');
-        pill.textContent = s;
-        stagePills.appendChild(pill);
+    // -------- render initial timeline --------
+    function renderTimeline() {
+      timelineEl.innerHTML = '';
+      for (const step of STEPS) {
+        const li = document.createElement('li');
+        li.id = 'step-' + step.id;
+        li.className = 'flex gap-3 items-start';
+        li.innerHTML = `
+          <div class="step-icon shrink-0 mt-0.5">${ICONS.pending}</div>
+          <div class="flex-1 min-w-0">
+            <div class="step-title text-sm text-slate-400">${esc(step.title)}</div>
+            <div class="step-detail mt-1 text-xs text-slate-500"></div>
+            <div class="step-extra mt-2"></div>
+          </div>
+        `;
+        timelineEl.appendChild(li);
       }
     }
 
-    function appendEvent(evt) {
-      if (evt.stage === '__close__') return;
+    function setStep(id, state, detail, extraHtml) {
+      const li = document.getElementById('step-' + id);
+      if (!li) return;
+      const iconEl = li.querySelector('.step-icon');
+      const titleEl = li.querySelector('.step-title');
+      const detailEl = li.querySelector('.step-detail');
+      const extraEl = li.querySelector('.step-extra');
+      iconEl.innerHTML = ICONS[state] || ICONS.pending;
+      const colorMap = {
+        pending: 'text-slate-400',
+        running: 'text-slate-100',
+        done: 'text-slate-100',
+        warn: 'text-amber-200',
+        error: 'text-red-300',
+        skip: 'text-slate-500 line-through decoration-slate-700',
+      };
+      titleEl.className = 'step-title text-sm ' + (colorMap[state] || 'text-slate-200');
+      if (detail !== undefined) detailEl.textContent = detail || '';
+      if (extraHtml !== undefined) {
+        extraEl.innerHTML = extraHtml || '';
+        if (extraHtml) extraEl.classList.add('step-enter');
+      }
+    }
+
+    function updateStepTitle(id, title) {
+      const li = document.getElementById('step-' + id);
+      if (!li) return;
+      li.querySelector('.step-title').textContent = title;
+    }
+
+    // -------- scan results table --------
+    function vulnTableHtml(vulns, selectedPkg) {
+      if (!vulns.length) {
+        return '<div class="text-xs text-slate-500 italic">No actionable vulnerabilities found.</div>';
+      }
+      const rows = vulns.map(v => {
+        const isSel = selectedPkg && v.package === selectedPkg;
+        const rowCls = isSel ? 'bg-indigo-500/10 ring-1 ring-indigo-400/40' : 'hover:bg-slate-800/40';
+        return `
+          <tr class="${rowCls}">
+            <td class="py-1.5 pr-3 mono">${esc(v.package)}</td>
+            <td class="py-1.5 pr-3"><span class="px-1.5 py-0.5 rounded border text-[10px] uppercase tracking-wide ${sevColor(v.severity)}">${esc(v.severity)}</span></td>
+            <td class="py-1.5 pr-3 mono text-slate-400">${esc(v.current || '?')} <span class="text-slate-600">→</span> ${esc(v.fixed)}</td>
+            <td class="py-1.5 pr-3">${v.isMajorBump ? '<span class="text-amber-300 text-[10px] uppercase">major</span>' : '<span class="text-slate-500 text-[10px] uppercase">minor</span>'}</td>
+            <td class="py-1.5 text-slate-400 truncate max-w-[200px]" title="${esc(v.title)}">${esc(v.title || '—')}</td>
+          </tr>
+        `;
+      }).join('');
+      return `
+        <div class="border border-slate-800 rounded-lg overflow-hidden">
+          <table class="w-full text-xs">
+            <thead class="bg-slate-800/50">
+              <tr class="text-left text-slate-400 uppercase tracking-wide text-[10px]">
+                <th class="py-1.5 px-3">Package</th>
+                <th class="py-1.5 pr-3">Severity</th>
+                <th class="py-1.5 pr-3">Bump</th>
+                <th class="py-1.5 pr-3"></th>
+                <th class="py-1.5 pr-3">Advisory</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // -------- result block (rendered into pr step) --------
+    function resultExtraHtml(result) {
+      if (!result) return '';
+      if (result.status === 'no-op') {
+        return `<div class="text-xs text-slate-400">${esc(result.reason || 'nothing to do')}</div>`;
+      }
+      if (result.status === 'failed') {
+        return `<div class="text-xs text-red-300">${esc(result.reason || 'failed')}</div>`;
+      }
+      if (result.status === 'dry-run') {
+        const cs = result.ctxSummary || {};
+        return `
+          <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs space-y-2">
+            <div><span class="text-slate-500">Test command:</span> <code class="mono text-slate-300">${esc(cs.testCommand || '(none)')}</code></div>
+            <div><span class="text-slate-500">Call sites:</span><br>${(cs.callSites || []).map(s => `<code class="mono text-slate-300">${esc(s)}</code>`).join('<br>') || '<span class="text-slate-500">none</span>'}</div>
+            <div><span class="text-slate-500">Changelog:</span> ${esc(cs.changelog?.source)} · ${esc(cs.changelog?.notes)} · ${cs.changelog?.chars} chars</div>
+          </div>
+        `;
+      }
+      // committed-local / pr-opened
+      const summary = result.summary || {};
+      const pr = result.pr || {};
+      return `
+        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="text-slate-500">Branch:</span>
+            <code class="mono text-slate-200">${esc(pr.branch || '')}</code>
+          </div>
+          ${summary.migration_notes ? `
+            <div>
+              <div class="text-slate-500 mb-1">Agent migration notes:</div>
+              <div class="whitespace-pre-wrap text-slate-300">${esc(summary.migration_notes)}</div>
+            </div>` : ''}
+          ${summary.files_touched?.length ? `
+            <div>
+              <div class="text-slate-500 mb-1">Files touched:</div>
+              ${summary.files_touched.map(f => `<code class="mono text-slate-300 block">${esc(f)}</code>`).join('')}
+            </div>` : ''}
+          ${pr.diffstat ? `
+            <div>
+              <div class="text-slate-500 mb-1">Diffstat:</div>
+              <pre class="mono text-slate-300 whitespace-pre-wrap text-[11px]">${esc(pr.diffstat)}</pre>
+            </div>` : ''}
+          ${pr.workspace ? `
+            <div class="text-[11px]">
+              <span class="text-slate-500">Workspace:</span>
+              <code class="mono text-slate-400">${esc(pr.workspace)}</code>
+            </div>` : ''}
+          ${pr.url ? `<a href="${esc(pr.url)}" target="_blank" class="inline-block text-indigo-300 hover:underline">View PR →</a>` : ''}
+        </div>
+      `;
+    }
+
+    // -------- event handler --------
+    function handleEvent(evt) {
+      // raw event log (collapsed by default)
+      const ts = (evt.ts || '').slice(11, 19);
+      rawEventsEl.textContent += `[${ts}] ${evt.stage} ${evt.data ? JSON.stringify(evt.data) : ''}\n`;
+      rawEventsEl.scrollTop = rawEventsEl.scrollHeight;
+
+      // agent stdout chunks → drawer
       if (evt.stage === 'agent.chunk') {
-        const t = (evt.data && evt.data.text) || '';
+        const t = evt.data?.text || '';
         agentOutEl.textContent += t;
         agentOutEl.scrollTop = agentOutEl.scrollHeight;
         return;
       }
-      seenStages.add(evt.stage);
-      renderStagePills();
 
-      const li = document.createElement('li');
-      li.className = 'log-line border-l-2 border-slate-800 pl-3';
-      const ts = (evt.ts || '').replace('T',' ').replace('Z','');
-      const stageColor = evt.stage === 'error' ? 'text-red-400'
-        : evt.stage === 'done' ? 'text-emerald-400'
-        : evt.stage.endsWith('.result') || evt.stage.endsWith('.done') ? 'text-emerald-300'
-        : 'text-indigo-300';
-      const dataStr = evt.data ? JSON.stringify(evt.data) : '';
-      li.innerHTML = `<span class="text-slate-500">${ts.slice(11,19)}</span>
-                      <span class="${stageColor} ml-2">${evt.stage}</span>
-                      <span class="text-slate-400 ml-2">${escapeHtml(dataStr)}</span>`;
-      eventsEl.appendChild(li);
-      eventsEl.scrollTop = eventsEl.scrollHeight;
+      const d = evt.data || {};
+
+      switch (evt.stage) {
+        case 'queued':
+          overallTitle.textContent = 'Run queued';
+          overallSub.textContent = d.repoUrl || '';
+          break;
+
+        case 'clone':
+          setStep('clone', 'running', 'Cloning ' + (d.repoUrl || ''));
+          break;
+
+        case 'npm-install':
+          setStep('clone', 'done', 'Cloned to ' + (d.repoDir ? shortenPath(d.repoDir) : 'workspace'));
+          setStep('install', 'running', 'Resolving and installing packages…');
+          break;
+
+        case 'scan':
+          setStep('install', 'done');
+          setStep('scan', 'running', 'Running npm audit…');
+          break;
+
+        case 'scan.result': {
+          scannedVulns = d.vulns || [];
+          const n = d.count || 0;
+          const word = n === 1 ? 'vulnerability' : 'vulnerabilities';
+          updateStepTitle('scan', n === 0 ? 'Scan complete — no actionable vulnerabilities' : `Scan complete — found ${n} ${word}`);
+          setStep('scan', n === 0 ? 'warn' : 'done', '', vulnTableHtml(scannedVulns, null));
+          if (n === 0) {
+            // mark downstream as skipped
+            ['triage','context','agent','verify','pr'].forEach(id => setStep(id, 'skip', '—'));
+          } else {
+            setStep('triage', 'running', 'Picking the best target…');
+          }
+          break;
+        }
+
+        case 'target': {
+          const t = d;
+          setStep('triage', 'done',
+            null,
+            `<div class="bg-indigo-500/10 border border-indigo-400/30 rounded-lg p-3 text-xs">
+              <div class="text-indigo-300 mb-1">Selected target</div>
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <code class="mono text-slate-100">${esc(t.package)}</code>
+                <span class="px-1.5 py-0.5 rounded border text-[10px] uppercase ${sevColor(t.severity)}">${esc(t.severity)}</span>
+                <span class="text-slate-400 mono">${esc(t.current || '?')} → ${esc(t.fixed)}</span>
+                ${t.isMajorBump ? '<span class="text-amber-300 text-[10px] uppercase">major bump</span>' : ''}
+              </div>
+              ${t.title ? `<div class="text-slate-400 mt-1">${esc(t.title)}</div>` : ''}
+              ${t.advisoryUrl ? `<a href="${esc(t.advisoryUrl)}" target="_blank" class="text-indigo-300 hover:underline text-[11px]">${esc(t.advisoryUrl)}</a>` : ''}
+            </div>`
+          );
+          updateStepTitle('triage', `Selected ${t.package} ${t.current || '?'} → ${t.fixed}`);
+          // re-render scan table with selection highlighted
+          const scanLi = document.getElementById('step-scan');
+          if (scanLi) scanLi.querySelector('.step-extra').innerHTML = vulnTableHtml(scannedVulns, t.package);
+          setStep('context', 'running', 'Fetching changelog and finding call sites…');
+          break;
+        }
+
+        case 'context.result': {
+          const cs = `${d.callSites} call site${d.callSites === 1 ? '' : 's'} · ${d.changelogChars > 0 ? Math.round(d.changelogChars/1024) + 'KB changelog' : 'no changelog'} · test: ${d.testCommand || '(none)'}`;
+          updateStepTitle('context', 'Gathered migration context');
+          setStep('context', 'done', cs);
+          if (dryRun) {
+            ['agent','verify','pr'].forEach(id => setStep(id, 'skip', '—'));
+          } else if (!d.testCommand) {
+            setStep('agent', 'skip', 'no test command — refusing to run agent');
+            setStep('verify', 'skip', '—');
+            setStep('pr', 'skip', '—');
+          } else {
+            setStep('agent', 'running', 'Calling Claude headless inside the workspace…');
+          }
+          break;
+        }
+
+        case 'agent.start':
+          setStep('agent', 'running', 'Calling Claude headless inside the workspace…');
+          break;
+
+        case 'agent.done':
+          updateStepTitle('agent', `Agent finished (${d.status})`);
+          setStep('agent', d.status === 'success' ? 'done' : (d.status === 'failed' ? 'error' : 'warn'),
+                  d.status === 'success' ? 'Bump applied; agent reports success'
+                  : d.status === 'partial' ? 'Bump applied; agent reports partial (read transcript)'
+                  : 'Agent did not complete the fix');
+          setStep('verify', 'running', 'Re-running test suite independently…');
+          break;
+
+        case 'verify.result':
+          updateStepTitle('verify', d.pass ? 'Tests pass' : 'Tests failed');
+          setStep('verify', d.pass ? 'done' : 'warn',
+                  d.pass ? 'Independent verification: green' : 'Tests did not pass — PR will be drafted as needs-human');
+          setStep('pr', 'running', 'Creating branch and committing…');
+          break;
+
+        case 'pr.open':
+          // ignore — final result handled in 'done'
+          break;
+
+        case 'done':
+          // overall done; final card rendered in fetchFinal
+          break;
+
+        case 'error':
+          // mark current running step as error
+          for (const s of STEPS) {
+            const li = document.getElementById('step-' + s.id);
+            if (li && li.querySelector('.step-icon').innerHTML.includes('spinner')) {
+              setStep(s.id, 'error', d.message || 'failed');
+              break;
+            }
+          }
+          break;
+      }
     }
 
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    function shortenPath(p) {
+      if (!p) return '';
+      if (p.length < 60) return p;
+      return '…' + p.slice(-55);
     }
 
-    async function fetchFinal(runId) {
-      const r = await fetch(`/api/runs/${runId}`);
-      if (!r.ok) return null;
-      return r.json();
+    // -------- final state --------
+    async function finishRun(runId) {
+      try {
+        const r = await fetch('/api/runs/' + runId);
+        if (!r.ok) return;
+        const state = await r.json();
+        const result = state.result;
+
+        // populate PR step with final result UI
+        if (result) {
+          const finalState = result.status === 'no-op' ? 'skip'
+            : result.status === 'failed' ? 'error'
+            : result.status === 'dry-run' ? 'done'
+            : result.status === 'pr-opened' ? 'done'
+            : result.status === 'committed-local' ? 'done'
+            : 'warn';
+          let prTitle = 'Pull request preparation';
+          if (result.status === 'committed-local') prTitle = 'Committed locally (push disabled in UI)';
+          else if (result.status === 'pr-opened') prTitle = 'Pull request opened';
+          else if (result.status === 'dry-run') prTitle = 'Dry run complete';
+          else if (result.status === 'no-op') prTitle = 'No action needed';
+          else if (result.status === 'failed') prTitle = 'Run failed';
+          updateStepTitle('pr', prTitle);
+          setStep('pr', finalState, null, resultExtraHtml(result));
+        }
+
+        // overall banner
+        const overallState = state.error ? 'error' : (state.status === 'done' ? 'done' : 'warn');
+        overallIcon.innerHTML = ICONS[overallState];
+        if (state.error) {
+          overallTitle.textContent = 'Run failed';
+          overallSub.textContent = state.error;
+        } else if (result?.status === 'committed-local') {
+          overallTitle.textContent = 'Bump applied · committed locally';
+          overallSub.textContent = result.target ? `${result.target.package} ${result.target.current || '?'} → ${result.target.fixed}` : '';
+        } else if (result?.status === 'pr-opened') {
+          overallTitle.textContent = 'Pull request opened';
+          overallSub.textContent = result.pr?.url || '';
+        } else if (result?.status === 'dry-run') {
+          overallTitle.textContent = 'Dry run complete';
+          overallSub.textContent = result.target ? `Would target: ${result.target.package} → ${result.target.fixed}` : '';
+        } else if (result?.status === 'no-op') {
+          overallTitle.textContent = 'Nothing to do';
+          overallSub.textContent = result.reason || '';
+        } else if (result?.status === 'failed') {
+          overallTitle.textContent = 'Run failed';
+          overallSub.textContent = result.reason || '';
+        } else {
+          overallTitle.textContent = 'Run complete';
+        }
+      } catch {}
+      stopTicker();
     }
 
-    function renderResult(state) {
-      resultCard.classList.remove('hidden');
-      resultBody.innerHTML = '';
-      if (state.error) {
-        resultBody.innerHTML = `<div class="text-red-400">Error: <span class="mono">${escapeHtml(state.error)}</span></div>`;
+    function startTicker() {
+      startedAt = Date.now();
+      stopTicker();
+      ticker = setInterval(() => {
+        elapsedEl.textContent = fmt(Date.now() - startedAt);
+      }, 250);
+    }
+    function stopTicker() {
+      if (ticker) { clearInterval(ticker); ticker = null; }
+    }
+
+    // -------- chat --------
+    let currentRunId = null;
+    let chatBusy = false;
+
+    const chatMessagesEl = document.getElementById('chat-messages');
+    const chatSuggestionsEl = document.getElementById('chat-suggestions');
+    const chatForm = document.getElementById('chat-form');
+    const chatInput = document.getElementById('chat-input');
+    const chatSend = document.getElementById('chat-send');
+
+    const SUGGESTIONS = [
+      'Why was this vulnerability picked?',
+      'What did the agent change and why?',
+      'Were any tests skipped or broken?',
+      'Was a major-version bump risky here?',
+      'What other vulns are still open?',
+    ];
+
+    function renderSuggestions() {
+      chatSuggestionsEl.innerHTML = '';
+      for (const s of SUGGESTIONS) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'text-[11px] text-slate-300 bg-slate-800/60 hover:bg-slate-700 border border-slate-700 rounded-full px-2.5 py-1 transition';
+        b.textContent = s;
+        b.addEventListener('click', () => {
+          if (chatBusy) return;
+          chatInput.value = s;
+          chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
+        });
+        chatSuggestionsEl.appendChild(b);
+      }
+    }
+
+    function chatBubble(role, text, opts = {}) {
+      const wrap = document.createElement('div');
+      wrap.className = role === 'user' ? 'flex justify-end' : 'flex justify-start';
+      const bubble = document.createElement('div');
+      bubble.className = role === 'user'
+        ? 'max-w-[85%] bg-indigo-500/15 border border-indigo-500/30 text-slate-100 rounded-2xl rounded-br-sm px-4 py-2 whitespace-pre-wrap'
+        : 'max-w-[85%] bg-slate-800/70 border border-slate-700 text-slate-100 rounded-2xl rounded-bl-sm px-4 py-2 whitespace-pre-wrap';
+      if (opts.streaming) bubble.dataset.streaming = '1';
+      bubble.textContent = text;
+      wrap.appendChild(bubble);
+      chatMessagesEl.appendChild(wrap);
+      chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+      return bubble;
+    }
+
+    function clearChat() {
+      chatMessagesEl.innerHTML = '';
+      const hint = document.createElement('div');
+      hint.className = 'text-xs text-slate-500 italic text-center py-2';
+      hint.textContent = 'Ask anything about this run — selection, agent decisions, test results, the diff…';
+      chatMessagesEl.appendChild(hint);
+      renderSuggestions();
+    }
+
+    chatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (chatBusy) return;
+      const message = chatInput.value.trim();
+      if (!message) return;
+      if (!currentRunId) {
+        chatBubble('assistant', 'No active run yet. Start a run first.');
         return;
       }
-      const r = state.result;
-      if (!r) {
-        resultBody.innerHTML = `<div class="text-slate-400">No result returned.</div>`;
-        return;
-      }
-      const rows = [];
-      rows.push(kv('status', r.status));
-      if (r.target) {
-        rows.push(kv('package', `${r.target.package}  ${r.target.current || '?'} → ${r.target.fixed}`));
-        rows.push(kv('severity', r.target.severity + (r.target.isMajorBump ? ' · major bump' : '')));
-        if (r.target.advisoryUrl) rows.push(kv('advisory', `<a class="text-indigo-300 hover:underline" target="_blank" href="${r.target.advisoryUrl}">${r.target.advisoryUrl}</a>`));
-      }
-      if (r.summary) {
-        rows.push(kv('agent status', r.summary.status));
-        if (r.summary.files_touched?.length) {
-          rows.push(kv('files touched', r.summary.files_touched.map(f => `<code class="mono">${escapeHtml(f)}</code>`).join('<br>')));
-        }
-        if (r.summary.migration_notes) {
-          rows.push(kv('migration notes', `<div class="whitespace-pre-wrap text-slate-300">${escapeHtml(r.summary.migration_notes)}</div>`));
-        }
-      }
-      if (r.pr) {
-        rows.push(kv('branch', `<code class="mono">${escapeHtml(r.pr.branch || '')}</code>`));
-        if (r.pr.diffstat) rows.push(kv('diffstat', `<pre class="mono text-xs text-slate-300 whitespace-pre-wrap">${escapeHtml(r.pr.diffstat)}</pre>`));
-        if (r.pr.workspace) rows.push(kv('workspace', `<code class="mono text-xs">${escapeHtml(r.pr.workspace)}</code>`));
-      }
-      if (r.ctxSummary) {
-        rows.push(kv('call sites', (r.ctxSummary.callSites || []).map(s => `<code class="mono">${escapeHtml(s)}</code>`).join('<br>') || '(none)'));
-        rows.push(kv('test command', `<code class="mono">${escapeHtml(r.ctxSummary.testCommand || '(none)')}</code>`));
-        rows.push(kv('changelog', `${r.ctxSummary.changelog?.source} · ${r.ctxSummary.changelog?.notes} · ${r.ctxSummary.changelog?.chars} chars`));
-      }
-      resultBody.innerHTML = rows.join('');
-    }
+      chatBusy = true;
+      chatSend.disabled = true;
+      chatSend.textContent = '…';
+      // hide hint on first ask
+      const hint = chatMessagesEl.querySelector('.italic');
+      if (hint) hint.remove();
+      chatBubble('user', message);
+      chatInput.value = '';
+      const replyBubble = chatBubble('assistant', '', { streaming: true });
+      replyBubble.classList.add('text-slate-400');
+      replyBubble.textContent = 'Thinking…';
 
-    function kv(label, val) {
-      return `<div class="grid grid-cols-12 gap-3 items-start border-b border-slate-800 pb-2 last:border-0">
-        <div class="col-span-3 text-xs uppercase tracking-wide text-slate-500">${label}</div>
-        <div class="col-span-9 text-slate-200">${val}</div>
-      </div>`;
-    }
+      try {
+        const r = await fetch('/api/runs/' + currentRunId + '/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${r.status}`);
+        }
+        // SSE-style stream
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        let full = '';
+        let firstChunk = true;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split('\n\n');
+          buf = parts.pop() || '';
+          for (const part of parts) {
+            const line = part.split('\n').find(l => l.startsWith('data: '));
+            if (!line) continue;
+            let evt;
+            try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+            if (evt.type === 'chunk') {
+              if (firstChunk) {
+                replyBubble.classList.remove('text-slate-400');
+                replyBubble.textContent = '';
+                firstChunk = false;
+              }
+              full += evt.text;
+              replyBubble.textContent = full;
+              chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+            } else if (evt.type === 'done') {
+              replyBubble.textContent = (evt.text || full).trim();
+              chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+            } else if (evt.type === 'error') {
+              replyBubble.classList.add('text-red-300');
+              replyBubble.textContent = 'Error: ' + evt.message;
+            }
+          }
+        }
+      } catch (err) {
+        replyBubble.classList.add('text-red-300');
+        replyBubble.textContent = 'Error: ' + err.message;
+      } finally {
+        chatBusy = false;
+        chatSend.disabled = false;
+        chatSend.textContent = 'Ask';
+        chatInput.focus();
+      }
+    });
 
+    // -------- form --------
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       runBtn.disabled = true;
       runBtn.textContent = 'Starting…';
-      eventsEl.innerHTML = '';
+      runCard.classList.remove('hidden');
       agentOutEl.textContent = '';
-      resultCard.classList.add('hidden');
-      seenStages.clear();
-      setStatus('running');
+      rawEventsEl.textContent = '';
+      scannedVulns = [];
+      clearChat();
+      currentRunId = null;
+      overallIcon.innerHTML = ICONS.running;
+      overallTitle.textContent = 'Starting run…';
+      overallSub.textContent = '';
+      runIdEl.textContent = '';
+      renderTimeline();
+      startTicker();
 
+      dryRun = document.getElementById('dryRun').checked;
       const body = {
         repoUrl: document.getElementById('repoUrl').value.trim(),
         target: document.getElementById('target').value.trim() || undefined,
-        dryRun: document.getElementById('dryRun').checked,
+        dryRun,
         maxIters: parseInt(document.getElementById('maxIters').value, 10) || 5,
       };
 
@@ -258,37 +695,34 @@
         }
         const { runId } = await r.json();
         runIdEl.textContent = runId;
+        currentRunId = runId;
 
         if (evtSource) evtSource.close();
-        evtSource = new EventSource(`/api/runs/${runId}/events`);
+        evtSource = new EventSource('/api/runs/' + runId + '/events');
         evtSource.onmessage = async (m) => {
           let evt;
           try { evt = JSON.parse(m.data); } catch { return; }
           if (evt.stage === '__close__') {
             evtSource.close();
-            const finalState = await fetchFinal(runId);
-            if (finalState) {
-              setStatus(finalState.status === 'error' ? 'error' : 'done');
-              renderResult(finalState);
-            }
+            await finishRun(runId);
             runBtn.disabled = false;
             runBtn.textContent = 'Run AutoSec';
             return;
           }
-          appendEvent(evt);
-        };
-        evtSource.onerror = () => {
-          // Stream may close on completion; final state is fetched on __close__.
+          handleEvent(evt);
         };
       } catch (err) {
-        setStatus('error');
-        appendEvent({ ts: new Date().toISOString(), stage: 'error', data: { message: err.message } });
+        overallIcon.innerHTML = ICONS.error;
+        overallTitle.textContent = 'Failed to start';
+        overallSub.textContent = err.message;
         runBtn.disabled = false;
         runBtn.textContent = 'Run AutoSec';
+        stopTicker();
       }
     });
 
-    renderStagePills();
+    // Initial render of suggestions
+    renderSuggestions();
   </script>
 </body>
 </html>
