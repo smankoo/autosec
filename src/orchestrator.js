@@ -13,11 +13,12 @@ import { openPR } from './pr.js';
 
 const exec = promisify(execFile);
 
-export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targetPkg, push = true }) {
+export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targetPkg, push = true, onLog }) {
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const root = path.join(os.tmpdir(), 'autosec-runs', runId);
   await mkdir(root, { recursive: true });
   const repoDir = path.join(root, 'repo');
+  const log = makeLogger(onLog);
 
   log('clone', { repoUrl, repoDir });
   await exec('git', ['clone', '--depth', '50', repoUrl, repoDir]);
@@ -66,7 +67,15 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   }
 
   log('agent.start');
-  const { transcript, summary } = await runAgent({ repoDir, vuln: target, ctx, maxIters });
+  const { transcript, summary } = await runAgent({
+    repoDir,
+    vuln: target,
+    ctx,
+    maxIters,
+    onChunk: onLog
+      ? ({ stream, text }) => onLog({ ts: new Date().toISOString(), stage: 'agent.chunk', data: { stream, text } })
+      : undefined,
+  });
   log('agent.done', { status: summary.status });
 
   log('verify');
@@ -126,8 +135,15 @@ function summarizeCtx(ctx) {
   };
 }
 
-function log(stage, data) {
-  const ts = new Date().toISOString();
-  if (data === undefined) console.error(`[autosec ${ts}] ${stage}`);
-  else console.error(`[autosec ${ts}] ${stage} ${JSON.stringify(data)}`);
+function makeLogger(onLog) {
+  return function log(stage, data) {
+    const ts = new Date().toISOString();
+    if (data === undefined) console.error(`[autosec ${ts}] ${stage}`);
+    else console.error(`[autosec ${ts}] ${stage} ${JSON.stringify(data)}`);
+    if (onLog) {
+      try {
+        onLog({ ts, stage, data: data ?? null });
+      } catch {}
+    }
+  };
 }

@@ -135,7 +135,35 @@ cd autosec
 npm install
 ```
 
-### Usage
+### Web UI
+
+```bash
+npm run serve   # http://127.0.0.1:8787
+```
+
+The UI exposes the full pipeline interactively: paste a repo URL, optionally pin a target package, watch pipeline events stream live (Server-Sent Events), and see the agent's stdout in a side pane. The final card shows status, target details, agent migration notes, files touched, diffstat, and call sites.
+
+For safety, **the UI never pushes or opens a PR** — it always runs with `push=false`. Use the CLI when you actually want to ship a PR.
+
+```mermaid
+flowchart LR
+    Browser -->|POST /api/runs| Server
+    Server -->|spawn pipeline| Orch[Orchestrator]
+    Orch -->|onLog events| Server
+    Server -->|SSE| Browser
+    Browser -->|GET /api/runs/:id| Server
+```
+
+API surface:
+
+| Endpoint | Use |
+|---|---|
+| `POST /api/runs` | start a run; returns `{runId}` |
+| `GET /api/runs/:id/events` | Server-Sent Events stream of pipeline events + agent stdout chunks |
+| `GET /api/runs/:id` | poll final state (status, result, error) |
+| `GET /api/health` | liveness |
+
+### CLI
 
 ```bash
 # Dry run — scan + triage + context only. Nothing is edited or pushed.
@@ -169,15 +197,20 @@ A `Dockerfile` and `run-docker.sh` are included for clean-room execution. Note: 
 
 ```
 autosec/
-├── bin/autosec.js          # CLI entry point (commander)
+├── bin/
+│   ├── autosec.js          # CLI entry point (commander)
+│   └── autosec-server.js   # web server entry
 ├── src/
-│   ├── orchestrator.js     # 5-stage pipeline
+│   ├── orchestrator.js     # 5-stage pipeline (with onLog hook for streaming)
 │   ├── scan.js             # npm audit --json → normalized
 │   ├── triage.js           # pick best target, dedupe vs. open PRs
 │   ├── context.js          # release notes + call-site discovery
 │   ├── agent.js            # spawn claude -p headless
 │   ├── verify.js           # independent npm test
-│   └── pr.js               # branch/commit/push/PR
+│   ├── pr.js               # branch/commit/push/PR
+│   └── server.js           # Express + SSE server
+├── web/
+│   └── index.html          # single-page UI (Tailwind CDN, no build step)
 ├── prompts/
 │   ├── system.md           # agent constraints (the leverage point)
 │   └── task.md             # per-run interpolated task description

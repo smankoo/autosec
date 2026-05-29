@@ -7,10 +7,12 @@
     "autosec": "bin/autosec.js"
   },
   "scripts": {
-    "start": "node bin/autosec.js"
+    "start": "node bin/autosec.js",
+    "serve": "node bin/autosec-server.js"
   },
   "dependencies": {
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "express": "^4.21.0"
   },
   "engines": {
     "node": ">=20"

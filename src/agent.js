@@ -10,7 +10,7 @@ const PROMPTS_DIR = path.resolve(__dirname, '..', 'prompts');
  * Run claude headless inside repoDir to perform the bump+fix.
  * Returns { transcript, summary } where summary is parsed from the autosec-summary fenced block.
  */
-export async function runAgent({ repoDir, vuln, ctx, maxIters, timeoutMs = 10 * 60 * 1000 }) {
+export async function runAgent({ repoDir, vuln, ctx, maxIters, timeoutMs = 10 * 60 * 1000, onChunk }) {
   const systemPrompt = await readFile(path.join(PROMPTS_DIR, 'system.md'), 'utf8');
   const taskTemplate = await readFile(path.join(PROMPTS_DIR, 'task.md'), 'utf8');
 
@@ -46,7 +46,7 @@ export async function runAgent({ repoDir, vuln, ctx, maxIters, timeoutMs = 10 * 
     String(maxIters * 6),
   ];
 
-  const transcript = await spawnClaude(args, { cwd: repoDir, timeoutMs });
+  const transcript = await spawnClaude(args, { cwd: repoDir, timeoutMs, onChunk });
   const summary = parseSummary(transcript);
   return { transcript, summary };
 }
@@ -89,7 +89,7 @@ function parseSummary(text) {
   return out;
 }
 
-function spawnClaude(args, { cwd, timeoutMs }) {
+function spawnClaude(args, { cwd, timeoutMs, onChunk }) {
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -102,10 +102,17 @@ function spawnClaude(args, { cwd, timeoutMs }) {
       const s = d.toString();
       stdout += s;
       process.stderr.write(s); // surface live to operator
+      if (onChunk) {
+        try { onChunk({ stream: 'stdout', text: s }); } catch {}
+      }
     });
     child.stderr.on('data', (d) => {
-      stderr += d.toString();
+      const s = d.toString();
+      stderr += s;
       process.stderr.write(d);
+      if (onChunk) {
+        try { onChunk({ stream: 'stderr', text: s }); } catch {}
+      }
     });
     child.on('error', (e) => {
       clearTimeout(timer);
