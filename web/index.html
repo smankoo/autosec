@@ -543,12 +543,13 @@
       li.querySelector('.step-title').textContent = title;
     }
 
-    function vulnTableHtml(vulns, selectedPkg) {
+    function vulnTableHtml(vulns, selectedPkg, selectedPkgs) {
       if (!vulns.length) {
         return '<div class="text-[12px] text-ink-500 italic">No actionable vulnerabilities found.</div>';
       }
+      const selectedSet = new Set(selectedPkgs || (selectedPkg ? [selectedPkg] : []));
       const rows = vulns.map(v => {
-        const isSel = selectedPkg && v.package === selectedPkg;
+        const isSel = selectedSet.has(v.package);
         return `
           <tr class="${isSel ? 'vuln-row-selected' : ''}">
             <td class="mono text-ink-900">${esc(v.package)}</td>
@@ -575,6 +576,118 @@
           </table>
         </div>
       `;
+    }
+
+    function renderSelectionPicker(vulns) {
+      const li = document.getElementById('step-triage');
+      if (!li) return;
+      const extra = li.querySelector('.step-extra');
+      const sevRank = { critical: 0, high: 1, moderate: 2, low: 3, info: 4 };
+      const sorted = [...vulns].sort((a, b) => (sevRank[a.severity] ?? 9) - (sevRank[b.severity] ?? 9));
+      const rowsHtml = sorted.map((v, i) => `
+        <label class="flex items-center gap-3 px-3 py-2 hover:bg-ink-50 cursor-pointer border-b border-ink-100 last:border-b-0">
+          <input type="checkbox" class="vuln-pick accent-accent-600 w-4 h-4" data-pkg="${esc(v.package)}" checked />
+          <code class="mono text-[12.5px] text-ink-900 flex-1 truncate">${esc(v.package)}</code>
+          ${sevPill(v.severity)}
+          <span class="mono text-[11.5px] text-ink-500 hidden sm:inline"><span class="text-ink-700">${esc(v.current || '?')}</span> <span class="text-ink-300">→</span> <span class="text-ink-900">${esc(v.fixed)}</span></span>
+          ${v.isMajorBump ? '<span class="pill pill-high">major</span>' : ''}
+        </label>
+      `).join('');
+      extra.innerHTML = `
+        <div class="rounded-2xl border border-accent-200 bg-gradient-to-br from-accent-50/60 to-white p-4">
+          <div class="flex items-center gap-2.5 mb-3">
+            <div class="w-7 h-7 rounded-full bg-accent-600 grid place-items-center ring-4 ring-accent-100">
+              <svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 11l3 3 8-8M20 12v6a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h8"/></svg>
+            </div>
+            <div class="flex-1">
+              <h3 class="text-[14px] font-medium text-ink-900">Pick what to remediate</h3>
+              <p class="text-[12px] text-ink-500">Found ${vulns.length} actionable vulnerabilities. The agent will choose the order itself.</p>
+            </div>
+          </div>
+          <div class="rounded-xl border border-ink-200 bg-white overflow-hidden mb-3 max-h-[60vh] overflow-y-auto">${rowsHtml}</div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button type="button" id="picker-all" class="chip text-[12px] rounded-full px-3 py-1.5">Select all</button>
+            <button type="button" id="picker-none" class="chip text-[12px] rounded-full px-3 py-1.5">Clear</button>
+            <button type="button" id="picker-critical" class="chip text-[12px] rounded-full px-3 py-1.5">Critical only</button>
+            <span class="ml-auto text-[12px] text-ink-500" id="picker-count">${vulns.length} selected</span>
+            <button type="button" id="picker-go" class="btn-primary text-[13px] font-medium px-4 py-2 rounded-xl">Remediate selected →</button>
+          </div>
+        </div>`;
+      const updateCount = () => {
+        const n = extra.querySelectorAll('.vuln-pick:checked').length;
+        const c = document.getElementById('picker-count');
+        if (c) c.textContent = `${n} selected`;
+        const go = document.getElementById('picker-go');
+        if (go) go.disabled = n === 0;
+      };
+      extra.querySelectorAll('.vuln-pick').forEach(cb => cb.addEventListener('change', updateCount));
+      document.getElementById('picker-all')?.addEventListener('click', () => {
+        extra.querySelectorAll('.vuln-pick').forEach(cb => cb.checked = true);
+        updateCount();
+      });
+      document.getElementById('picker-none')?.addEventListener('click', () => {
+        extra.querySelectorAll('.vuln-pick').forEach(cb => cb.checked = false);
+        updateCount();
+      });
+      document.getElementById('picker-critical')?.addEventListener('click', () => {
+        extra.querySelectorAll('.vuln-pick').forEach(cb => {
+          const pkg = cb.dataset.pkg;
+          const v = vulns.find(x => x.package === pkg);
+          cb.checked = v?.severity === 'critical';
+        });
+        updateCount();
+      });
+      document.getElementById('picker-go')?.addEventListener('click', async () => {
+        const picks = [...extra.querySelectorAll('.vuln-pick:checked')].map(cb => cb.dataset.pkg);
+        if (picks.length === 0) return;
+        const btn = document.getElementById('picker-go');
+        btn.disabled = true;
+        btn.textContent = 'Sending…';
+        try {
+          const r = await fetch('/api/runs/' + currentRunId + '/select', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ packages: picks }),
+          });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${r.status}`);
+          }
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = 'Remediate selected →';
+          alert('Failed to send selection: ' + err.message);
+        }
+      });
+    }
+
+    function multiTargetCalloutHtml(targets) {
+      if (!targets.length) return '';
+      if (targets.length === 1) {
+        const t = targets[0];
+        return `<div class="rounded-xl bg-gradient-to-br from-accent-50 to-white border border-accent-100 p-4 text-[12.5px]">
+          <div class="text-[10px] uppercase tracking-[0.08em] text-accent-700 font-medium mb-2">Selected target</div>
+          <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+            <code class="mono text-ink-900 font-medium">${esc(t.package)}</code>
+            ${sevPill(t.severity)}
+            <span class="text-ink-500 mono"><span class="text-ink-700">${esc(t.current || '?')}</span> <span class="text-ink-300">→</span> <span class="text-ink-900">${esc(t.fixed)}</span></span>
+            ${t.isMajorBump ? '<span class="pill pill-high">major bump</span>' : ''}
+          </div>
+          ${t.title ? `<div class="text-ink-600 mt-2 leading-relaxed">${esc(t.title)}</div>` : ''}
+        </div>`;
+      }
+      const items = targets.map((t) => `
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 px-2 rounded hover:bg-white/60">
+          <code class="mono text-[12px] text-ink-900">${esc(t.package)}</code>
+          ${sevPill(t.severity)}
+          <span class="text-ink-500 mono text-[11.5px]"><span class="text-ink-700">${esc(t.current || '?')}</span> <span class="text-ink-300">→</span> <span class="text-ink-900">${esc(t.fixed)}</span></span>
+          ${t.isMajorBump ? '<span class="pill pill-high">major</span>' : ''}
+        </div>
+      `).join('');
+      return `<div class="rounded-xl bg-gradient-to-br from-accent-50 to-white border border-accent-100 p-4">
+        <div class="text-[10px] uppercase tracking-[0.08em] text-accent-700 font-medium mb-2">${targets.length} targets selected — agent picks order</div>
+        <div>${items}</div>
+      </div>`;
     }
 
     function resultExtraHtml(result) {
@@ -665,27 +778,38 @@
           updateStepTitle('scan', n === 0 ? 'Scan complete — no actionable vulnerabilities' : `Scan complete — found ${n} ${word}`);
           setStep('scan', n === 0 ? 'warn' : 'done', '', vulnTableHtml(scannedVulns, null));
           if (n === 0) {
-            ['triage','context','agent','verify','pr'].forEach(id => setStep(id, 'skip', '—'));
+            ['triage','context','baseline','agent','verify','pr'].forEach(id => setStep(id, 'skip', '—'));
           } else {
-            setStep('triage', 'running', 'Picking the best target…');
+            setStep('triage', 'running', 'Picking targets…');
           }
           break;
         }
-        case 'target': {
-          const t = d;
-          setStep('triage', 'done', null,
-            `<div class="rounded-xl bg-gradient-to-br from-accent-50 to-white border border-accent-100 p-4 text-[12.5px]">
-              <div class="text-[10px] uppercase tracking-[0.08em] text-accent-700 font-medium mb-2">Selected target</div>
-              <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-                <code class="mono text-ink-900 font-medium">${esc(t.package)}</code>
-                ${sevPill(t.severity)}
-                <span class="text-ink-500 mono"><span class="text-ink-700">${esc(t.current || '?')}</span> <span class="text-ink-300">→</span> <span class="text-ink-900">${esc(t.fixed)}</span></span>
-                ${t.isMajorBump ? '<span class="pill pill-high">major bump</span>' : ''}
-              </div>
-              ${t.title ? `<div class="text-ink-600 mt-2 leading-relaxed">${esc(t.title)}</div>` : ''}
-              ${t.advisoryUrl ? `<a href="${esc(t.advisoryUrl)}" target="_blank" class="text-accent-600 hover:text-accent-700 text-[11.5px] mt-2 inline-block">${esc(t.advisoryUrl)}</a>` : ''}
-            </div>`
+        case 'awaiting-selection': {
+          renderSelectionPicker(d.vulns || []);
+          updateStepTitle('triage', 'Awaiting your selection');
+          setStep('triage', 'warn', `Found ${(d.vulns || []).length} vulnerabilities — pick which to remediate`);
+          break;
+        }
+        case 'selection.confirmed': {
+          const picks = d.packages || [];
+          updateStepTitle('triage', `${picks.length} package${picks.length === 1 ? '' : 's'} selected`);
+          setStep('triage', 'done', picks.join(', '));
+          break;
+        }
+        case 'targets': {
+          const pkgs = (d.targets || []).map((t) => t.package).join(', ');
+          updateStepTitle('triage', d.count === 1 ? `Selected ${d.targets[0].package}` : `${d.count} targets locked in`);
+          setStep('triage', 'done', pkgs,
+            multiTargetCalloutHtml(d.targets || [])
           );
+          const scanLi = document.getElementById('step-scan');
+          if (scanLi) scanLi.querySelector('.step-extra').innerHTML = vulnTableHtml(scannedVulns, null, (d.targets || []).map((t) => t.package));
+          setStep('context', 'running', 'Fetching changelogs and finding call sites…');
+          break;
+        }
+        case 'target': {
+          // back-compat: old single-target event still fires for CLI runs with --target
+          const t = d;
           updateStepTitle('triage', `Selected ${t.package} ${t.current || '?'} → ${t.fixed}`);
           const scanLi = document.getElementById('step-scan');
           if (scanLi) scanLi.querySelector('.step-extra').innerHTML = vulnTableHtml(scannedVulns, t.package);
@@ -996,14 +1120,22 @@
           overallTitle.textContent = 'Run failed';
           overallSub.textContent = state.error;
         } else if (result?.status === 'committed-local') {
-          overallTitle.textContent = 'Bump applied · committed locally';
-          overallSub.textContent = result.target ? `${result.target.package} ${result.target.current || '?'} → ${result.target.fixed}` : '';
+          const ts = result.targets || (result.target ? [result.target] : []);
+          overallTitle.textContent = ts.length > 1
+            ? `${ts.length} bumps applied · committed locally`
+            : 'Bump applied · committed locally';
+          overallSub.textContent = ts.length === 1
+            ? `${ts[0].package} ${ts[0].current || '?'} → ${ts[0].fixed}`
+            : ts.map(t => t.package).join(', ');
         } else if (result?.status === 'pr-opened') {
           overallTitle.textContent = 'Pull request opened';
           overallSub.textContent = result.pr?.url || '';
         } else if (result?.status === 'dry-run') {
           overallTitle.textContent = 'Dry run complete';
-          overallSub.textContent = result.target ? `Would target: ${result.target.package} → ${result.target.fixed}` : '';
+          const ts = result.targets || (result.target ? [result.target] : []);
+          overallSub.textContent = ts.length === 1
+            ? `Would target: ${ts[0].package} → ${ts[0].fixed}`
+            : `Would target ${ts.length} packages`;
         } else if (result?.status === 'no-op') {
           overallTitle.textContent = 'Nothing to do';
           overallSub.textContent = result.reason || '';

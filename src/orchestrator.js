@@ -13,10 +13,14 @@ import { verify } from './verify.js';
 import { openPR } from './pr.js';
 import { snapshotNatives, restoreMissingNatives } from './nativeSnapshot.js';
 import { classifyVerify } from './classify.js';
+import {
+  NPM_CACHE_DIR, nodeModulesCacheKey, restoreNodeModules,
+  snapshotNodeModules, hasLockfile, preferredInstallCmd,
+} from './installCache.js';
 
 const exec = promisify(execFile);
 
-export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targetPkg, push = true, onLog }) {
+export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targetPkg, push = true, onLog, selectTargets }) {
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const root = path.join(os.tmpdir(), 'autosec-runs', runId);
   await mkdir(root, { recursive: true });
@@ -29,30 +33,32 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   await exec('git', ['config', 'user.name', process.env.GIT_AUTHOR_NAME || 'AutoSec Bot'], { cwd: repoDir });
   await exec('git', ['config', 'user.email', process.env.GIT_AUTHOR_EMAIL || 'autosec@example.invalid'], { cwd: repoDir });
 
-  log('npm-install');
-  const npmArgs = ['install', '--no-audit', '--no-fund', `--cache=${path.join(root, 'npm-cache')}`];
-  if (process.env.AUTOSEC_NPM_REGISTRY) npmArgs.push(`--registry=${process.env.AUTOSEC_NPM_REGISTRY}`);
-  try {
-    await exec('npm', npmArgs, { cwd: repoDir, maxBuffer: 50 * 1024 * 1024 });
-  } catch (err) {
-    // Native postinstalls (canvas, sharp, node-sass) often fail on bleeding-edge Node.
-    // npm audit only needs the lockfile + node_modules tree — not the compiled binaries.
-    // Retry with --ignore-scripts so we can still scan.
-    log('npm-install.retry', { reason: 'install failed, retrying with --ignore-scripts', error: shortErr(err) });
-    await exec('npm', [...npmArgs, '--ignore-scripts'], { cwd: repoDir, maxBuffer: 50 * 1024 * 1024 });
-  }
-
-  // Detect the required node version from installed node_modules, then reinstall
-  // with the correct node if it differs from the current one so native bindings match.
+  // Resolve the target Node BEFORE any install — otherwise the first install
+  // compiles native bindings against the host's V8 ABI, and we either ship
+  // mismatched binaries or have to wipe and reinstall (slow). The pre-install
+  // resolve only consults files in a fresh clone: .nvmrc, .node-version,
+  // package.json#engines.node.
   const nodeEnv = await resolveNodeEnv(repoDir, log);
-  if (nodeEnv !== process.env) {
-    const { rm: rmDir } = await import('node:fs/promises');
-    await rmDir(path.join(repoDir, 'node_modules'), { recursive: true, force: true });
-    try {
-      await exec('npm', npmArgs, { cwd: repoDir, env: nodeEnv, maxBuffer: 50 * 1024 * 1024 });
-    } catch (err) {
-      log('npm-install.retry', { reason: 'reinstall failed, retrying with --ignore-scripts', error: shortErr(err) });
-      await exec('npm', [...npmArgs, '--ignore-scripts'], { cwd: repoDir, env: nodeEnv, maxBuffer: 50 * 1024 * 1024 });
+  const nodeBinHint = nodeEnv === process.env
+    ? process.execPath
+    : (nodeEnv.PATH || '').split(':')[0];
+
+  log('npm-install');
+  const npmCacheArg = `--cache=${NPM_CACHE_DIR}`;
+  const lockfile = await hasLockfile(repoDir);
+  const installCmd = preferredInstallCmd(lockfile);
+  const npmArgs = [installCmd, '--no-audit', '--no-fund', npmCacheArg];
+  if (process.env.AUTOSEC_NPM_REGISTRY) npmArgs.push(`--registry=${process.env.AUTOSEC_NPM_REGISTRY}`);
+
+  const cacheKey = await nodeModulesCacheKey(repoDir, nodeBinHint);
+  let cacheHit = cacheKey ? await restoreNodeModules(cacheKey, repoDir) : false;
+  if (cacheHit) {
+    log('npm-install.cache-hit', { key: cacheKey });
+  } else {
+    await runInstall(npmArgs, { cwd: repoDir, env: nodeEnv }, log);
+    if (cacheKey) {
+      const cached = await snapshotNodeModules(cacheKey, repoDir);
+      if (cached) log('npm-install.cache-store', { key: cacheKey });
     }
   }
 
@@ -71,31 +77,51 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
     })),
   });
 
-  let target;
+  // Decide which vulns to remediate. Priority: explicit targetPkg (single, CLI),
+  // then UI-supplied selectTargets callback (multi), then triage's best pick.
+  let targets;
   if (targetPkg) {
-    target = vulns.find((v) => v.package === targetPkg);
-    if (!target) {
-      return { runId, status: 'no-op', reason: `target ${targetPkg} not in scan results`, vulnsFound: vulns.length };
+    const t = vulns.find((v) => v.package === targetPkg);
+    if (!t) return { runId, status: 'no-op', reason: `target ${targetPkg} not in scan results`, vulnsFound: vulns.length };
+    targets = [t];
+  } else if (selectTargets && vulns.length > 0) {
+    const picks = await selectTargets(vulns);
+    if (!picks || picks.length === 0) {
+      return { runId, status: 'no-op', reason: 'user selected no vulnerabilities', vulnsFound: vulns.length };
     }
+    targets = picks;
   } else {
-    target = await triage(vulns, { repoDir });
+    const best = await triage(vulns, { repoDir });
+    targets = best ? [best] : [];
   }
-  if (!target) {
+  if (targets.length === 0) {
     return { runId, status: 'no-op', reason: 'no actionable vuln', vulnsFound: vulns.length };
   }
-  log('target', target);
+  log('targets', { count: targets.length, packages: targets.map((t) => t.package), targets });
 
   log('context');
-  const ctx = await gatherContext(target, repoDir);
+  const contexts = [];
+  for (const t of targets) {
+    const c = await gatherContext(t, repoDir);
+    contexts.push(c);
+  }
+  // Use the first target's testCommand and changelog as the run-level summary —
+  // testCommand comes from package.json so it's the same for every target.
+  const ctx = contexts[0];
   log('context.result', {
-    callSites: ctx.callSites.length,
+    callSites: contexts.reduce((n, c) => n + c.callSites.length, 0),
     changelogSource: ctx.changelog.source,
-    changelogChars: ctx.changelog.text.length,
+    changelogChars: contexts.reduce((n, c) => n + c.changelog.text.length, 0),
     testCommand: ctx.testCommand,
+    perTarget: contexts.map((c, i) => ({
+      package: targets[i].package,
+      callSites: c.callSites.length,
+      changelogChars: c.changelog.text.length,
+    })),
   });
 
   if (!ctx.testCommand) {
-    return { runId, status: 'failed', reason: 'no test command in repo', target };
+    return { runId, status: 'failed', reason: 'no test command in repo', targets };
   }
 
   log('baseline');
@@ -103,7 +129,7 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   log('baseline.result', { pass: baselineResult.pass, output: baselineResult.output, tests: baselineResult.tests || [] });
 
   if (dryRun) {
-    return { runId, status: 'dry-run', target, ctxSummary: summarizeCtx(ctx), baseline: baselineResult };
+    return { runId, status: 'dry-run', targets, ctxSummary: summarizeCtx(ctx), baseline: baselineResult };
   }
 
   // Snapshot native bindings (.node files) before the agent runs. Many bumps
@@ -115,11 +141,11 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   const snap = await snapshotNatives(repoDir, snapshotDir);
   log('native.snapshot', { count: snap.count });
 
-  log('agent.start');
+  log('agent.start', { targetCount: targets.length });
   const { transcript, summary } = await runAgent({
     repoDir,
-    vuln: target,
-    ctx,
+    targets,
+    contexts,
     maxIters,
     onChunk: onLog
       ? ({ stream, text }) => onLog({ ts: new Date().toISOString(), stage: 'agent.chunk', data: { stream, text } })
@@ -150,8 +176,9 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   log('pr.open', { draft, push });
   const pr = await openPR({
     repoDir,
-    vuln: target,
+    targets,
     ctx,
+    contexts,
     summary,
     testResult,
     baselineResult,
@@ -164,7 +191,8 @@ export async function run({ repoUrl, dryRun, maxIters, branchBase, target: targe
   return {
     runId,
     status: push ? (draft ? 'pr-opened-draft' : 'pr-opened') : 'committed-local',
-    target,
+    targets,
+    target: targets[0], // back-compat for single-target callers/UI
     pr,
     summary,
     workspace: repoDir,
@@ -194,32 +222,6 @@ async function resolveNodeEnv(repoDir, log) {
     } catch {}
   }
 
-  // 3. Scan all installed node_modules for the highest minimum engine requirement
-  if (!version) {
-    try {
-      const { readdir } = await import('node:fs/promises');
-      const pkgDirs = await readdir(path.join(repoDir, 'node_modules'));
-      let maxMin = [0, 0, 0];
-      for (const dir of pkgDirs) {
-        if (dir.startsWith('.')) continue;
-        const pkgJsonPath = dir.startsWith('@')
-          ? null // skip scoped for now — handled below
-          : path.join(repoDir, 'node_modules', dir, 'package.json');
-        if (!pkgJsonPath) continue;
-        try {
-          const depPkg = JSON.parse(await readFile(pkgJsonPath, 'utf8'));
-          const eng = depPkg.engines?.node;
-          if (!eng) continue;
-          const v = minVersionFromRange(eng);
-          if (!v) continue;
-          const parts = v.split('.').map(Number);
-          if (cmpVersion(parts, maxMin) > 0) maxMin = parts;
-        } catch {}
-      }
-      if (maxMin[0] > 0) version = maxMin.join('.');
-    } catch {}
-  }
-
   if (!version) return process.env;
 
   try {
@@ -241,13 +243,6 @@ function minVersionFromRange(range) {
   // Extract the first concrete x.y.z from a semver range like "^20.19.0 || >=22.12.0"
   const m = range.match(/(\d+\.\d+\.\d+)/);
   return m ? m[1] : null;
-}
-
-function cmpVersion(a, b) {
-  for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] - b[i];
-  }
-  return 0;
 }
 
 function normalizeRepoUrls(input) {
@@ -335,6 +330,35 @@ function summarizeCtx(ctx) {
     changelog: { source: ctx.changelog.source, notes: ctx.changelog.notes, chars: ctx.changelog.text.length },
     repoMeta: ctx.repoMeta,
   };
+}
+
+async function runInstall(npmArgs, opts, log) {
+  // Try the preferred command (ci or install). Two fallbacks:
+  // 1. If `npm ci` fails because the lockfile is out of sync, retry with
+  //    `npm install` (which will rewrite the lockfile).
+  // 2. If postinstalls fail (native build errors), retry with --ignore-scripts.
+  const isCi = npmArgs[0] === 'ci';
+  const env = { ...(opts.env || process.env), maxBuffer: 50 * 1024 * 1024 };
+  try {
+    await exec('npm', npmArgs, { ...opts, env, maxBuffer: 50 * 1024 * 1024 });
+    return;
+  } catch (err) {
+    const msg = String(err.stderr || err.message || '');
+    if (isCi && /can only install packages when your package\.json and package-lock\.json/.test(msg)) {
+      log('npm-install.retry', { reason: 'lockfile out of sync; falling back to npm install' });
+      const fallback = ['install', ...npmArgs.slice(1)];
+      try {
+        await exec('npm', fallback, { ...opts, env, maxBuffer: 50 * 1024 * 1024 });
+        return;
+      } catch (err2) {
+        log('npm-install.retry', { reason: 'npm install failed, retrying with --ignore-scripts', error: shortErr(err2) });
+        await exec('npm', [...fallback, '--ignore-scripts'], { ...opts, env, maxBuffer: 50 * 1024 * 1024 });
+        return;
+      }
+    }
+    log('npm-install.retry', { reason: 'install failed, retrying with --ignore-scripts', error: shortErr(err) });
+    await exec('npm', [...npmArgs, '--ignore-scripts'], { ...opts, env, maxBuffer: 50 * 1024 * 1024 });
+  }
 }
 
 function shortErr(err) {

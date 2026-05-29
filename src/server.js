@@ -231,7 +231,7 @@ function buildChatPrompt(run, userMessage) {
 
 function inferFailedStage(events) {
   // The last non-error event before the error is the stage that was running.
-  const ORDER = ['clone', 'npm-install', 'scan', 'triage', 'context', 'baseline', 'agent.start', 'verify', 'pr.open'];
+  const ORDER = ['clone', 'npm-install', 'scan', 'targets', 'triage', 'context', 'baseline', 'agent.start', 'verify', 'pr.open'];
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.stage === 'error' || e.stage === 'agent.chunk') continue;
@@ -293,6 +293,17 @@ export function createApp() {
     run.status = 'running';
     pushEvent(run, { ts: new Date().toISOString(), stage: 'queued', data: { repoUrl, target: target || null, dryRun: !!dryRun, maxIters: maxIters || 5 } });
 
+    // Selection deferred — set up a promise the orchestrator can await on.
+    let resolveSelection;
+    let rejectSelection;
+    run.selectionPending = new Promise((res, rej) => {
+      resolveSelection = res;
+      rejectSelection = rej;
+    });
+    run.resolveSelection = resolveSelection;
+    run.rejectSelection = rejectSelection;
+    run.selectionResolved = false;
+
     // Start work in background. UI never triggers a push.
     runOrchestrator({
       repoUrl,
@@ -302,6 +313,32 @@ export function createApp() {
       branchBase: 'main',
       push: false,
       onLog: (evt) => pushEvent(run, evt),
+      selectTargets: async (vulns) => {
+        // Skip the picker when the caller already forced a target or there's
+        // exactly one actionable vuln.
+        if (target) return null; // null = orchestrator handles fallback
+        if (vulns.length <= 1) return vulns;
+        pushEvent(run, {
+          ts: new Date().toISOString(),
+          stage: 'awaiting-selection',
+          data: {
+            count: vulns.length,
+            vulns: vulns.map((v) => ({
+              package: v.package,
+              severity: v.severity,
+              current: v.current,
+              fixed: v.fixed,
+              isMajorBump: v.isMajorBump,
+              title: v.title,
+              advisoryUrl: v.advisoryUrl,
+            })),
+          },
+        });
+        const selectedNames = await run.selectionPending; // [pkgNames]
+        const picks = vulns.filter((v) => selectedNames.includes(v.package));
+        pushEvent(run, { ts: new Date().toISOString(), stage: 'selection.confirmed', data: { packages: picks.map((p) => p.package) } });
+        return picks;
+      },
     })
       .then((result) => {
         run.status = 'done';
@@ -312,6 +349,10 @@ export function createApp() {
       .catch(async (err) => {
         run.status = 'error';
         run.error = err.message;
+        if (!run.selectionResolved) {
+          run.selectionResolved = true;
+          run.rejectSelection?.(err);
+        }
         pushEvent(run, { ts: new Date().toISOString(), stage: 'error', data: { message: err.message } });
 
         // Self-diagnosis: spawn a Claude agent against AutoSec's own source to propose a patch.
@@ -335,6 +376,19 @@ export function createApp() {
       });
 
     res.status(202).json({ runId: run.id });
+  });
+
+  app.post('/api/runs/:id/select', (req, res) => {
+    const run = runs.get(req.params.id);
+    if (!run) return res.status(404).json({ error: 'not found' });
+    if (run.selectionResolved) return res.status(409).json({ error: 'already resolved' });
+    const { packages } = req.body || {};
+    if (!Array.isArray(packages)) {
+      return res.status(400).json({ error: 'packages array required' });
+    }
+    run.selectionResolved = true;
+    run.resolveSelection(packages);
+    res.json({ ok: true, packages });
   });
 
   app.get('/api/runs/:id', (req, res) => {

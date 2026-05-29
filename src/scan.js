@@ -29,27 +29,50 @@ export async function scan(repoDir) {
     throw new Error('npm audit did not produce JSON');
   }
 
-  const out = [];
+  // npm audit's `fixAvailable.name` is the package you actually have to bump,
+  // which may be a *parent* of the vulnerable package. Several transitive
+  // vulns can resolve to the same parent bump, so we dedupe by bump target.
+  const byBumpTarget = new Map(); // "name@version" -> aggregated entry
   const vulns = data.vulnerabilities || {};
   for (const [pkg, v] of Object.entries(vulns)) {
-    if (!v.fixAvailable) continue;
-    const fixed = typeof v.fixAvailable === 'object' ? v.fixAvailable.version : null;
-    if (!fixed) continue;
+    if (!v.fixAvailable || typeof v.fixAvailable !== 'object') continue;
+    const bumpName = v.fixAvailable.name;
+    const bumpVersion = v.fixAvailable.version;
+    if (!bumpName || !bumpVersion) continue;
+
+    const installed = await readInstalledVersion(repoDir, bumpName);
+    if (installed && cmpSemver(installed, bumpVersion) >= 0) continue;
+
     const advisory = (v.via || []).find((x) => typeof x === 'object') || {};
-    const installed = await readInstalledVersion(repoDir, pkg);
-    if (installed && cmpSemver(installed, fixed) >= 0) continue; // already at/above fix
-    out.push({
-      package: pkg,
-      current: installed,
-      fixed,
-      severity: v.severity,
-      severityRank: SEVERITY_RANK[v.severity] ?? 0,
-      advisoryUrl: advisory.url || null,
-      title: advisory.title || null,
-      isMajorBump: !!(typeof v.fixAvailable === 'object' && v.fixAvailable.isSemVerMajor),
-    });
+    const key = `${bumpName}@${bumpVersion}`;
+    let entry = byBumpTarget.get(key);
+    if (!entry) {
+      entry = {
+        package: bumpName,
+        current: installed,
+        fixed: bumpVersion,
+        severity: v.severity,
+        severityRank: SEVERITY_RANK[v.severity] ?? 0,
+        advisoryUrl: advisory.url || null,
+        title: advisory.title || null,
+        isMajorBump: !!v.fixAvailable.isSemVerMajor,
+        // Track which audit-key vulns this single bump resolves.
+        fixesVulnsIn: [],
+      };
+      byBumpTarget.set(key, entry);
+    }
+    if (!entry.fixesVulnsIn.includes(pkg)) entry.fixesVulnsIn.push(pkg);
+    // Promote severity if a transitive entry has a higher one than the parent's first hit.
+    const sevRank = SEVERITY_RANK[v.severity] ?? 0;
+    if (sevRank > entry.severityRank) {
+      entry.severity = v.severity;
+      entry.severityRank = sevRank;
+    }
+    // Keep the most informative advisory title/url we see.
+    if (!entry.advisoryUrl && advisory.url) entry.advisoryUrl = advisory.url;
+    if (!entry.title && advisory.title) entry.title = advisory.title;
   }
-  return out;
+  return [...byBumpTarget.values()];
 }
 
 function cmpSemver(a, b) {

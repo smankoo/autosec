@@ -7,10 +7,17 @@ const exec = promisify(execFile);
 /**
  * Branch, commit, push, and open a PR. Returns { url, branch, draft }.
  */
-export async function openPR({ repoDir, vuln, ctx, summary, testResult, baselineResult, branchBase, draft, push = true, verdict }) {
-  const branch = autosecBranchName(vuln);
-  const title = `autosec: bump ${vuln.package} to ${vuln.fixed} (${vuln.severity})`;
-  const body = renderBody({ vuln, ctx, summary, testResult, baselineResult, verdict });
+export async function openPR({ repoDir, vuln, targets, ctx, contexts, summary, testResult, baselineResult, branchBase, draft, push = true, verdict }) {
+  // Back-compat: single-vuln callers may pass {vuln} instead of {targets}.
+  if (!targets) targets = vuln ? [vuln] : [];
+  const isMulti = targets.length > 1;
+  const branch = isMulti
+    ? `autosec/multi-${targets.length}-${shortHash(targets.map((t) => t.package).join(','))}`
+    : autosecBranchName(targets[0]);
+  const title = isMulti
+    ? `autosec: bump ${targets.length} dependencies (${highestSeverity(targets)})`
+    : `autosec: bump ${targets[0].package} to ${targets[0].fixed} (${targets[0].severity})`;
+  const body = renderBody({ targets, ctx, contexts, summary, testResult, baselineResult, verdict });
 
   await git(repoDir, ['checkout', '-B', branch]);
   await git(repoDir, ['add', '-A']);
@@ -74,27 +81,51 @@ async function git(cwd, args) {
   return exec('git', args, { cwd });
 }
 
-function renderBody({ vuln, ctx, summary, testResult, baselineResult, verdict }) {
+function highestSeverity(targets) {
+  const order = ['critical', 'high', 'moderate', 'low', 'info'];
+  for (const s of order) if (targets.some((t) => t.severity === s)) return s;
+  return targets[0]?.severity || 'unknown';
+}
+
+function shortHash(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h) + s.charCodeAt(i) | 0;
+  return Math.abs(h).toString(36).slice(0, 6);
+}
+
+function renderBody({ targets, ctx, contexts, summary, testResult, baselineResult, verdict }) {
   const tail = (testResult?.output || '').split('\n').slice(-60).join('\n');
   const baselinePassed = baselineResult?.pass ?? true;
   const verdictLabel = verdict?.label || (testResult?.pass ? 'pass' : (baselinePassed ? 'regression' : 'pre-existing-failure'));
   const verdictNote = {
     pass:                   'PASSED',
-    regression:             'FAILED (regression introduced by this bump)',
+    regression:             'FAILED (regression introduced by these bumps)',
     'pre-existing-failure': 'FAILED (pre-existing failures — baseline also failing)',
-    'environment-broken':   'FAILED (test environment broken — not caused by this bump)',
+    'environment-broken':   'FAILED (test environment broken — not caused by these bumps)',
   }[verdictLabel] || 'FAILED';
   const testNote = verdictNote;
-  const meta = ctx.repoMeta;
+  const meta = ctx?.repoMeta;
   const repoLink = meta ? `https://github.com/${meta.owner}/${meta.repo}` : null;
+  const isMulti = targets.length > 1;
+  const bumpHeader = isMulti
+    ? [
+        `## AutoSec dependency bumps (${targets.length})`,
+        ``,
+        ...targets.map((t) =>
+          `- \`${t.package}\` \`${t.current || '?'}\` → \`${t.fixed}\` (${t.severity}${t.isMajorBump ? ', major' : ''})${t.advisoryUrl ? ` — [advisory](${t.advisoryUrl})` : ''}`
+        ),
+      ]
+    : [
+        `## AutoSec dependency bump`,
+        ``,
+        `- **Package:** \`${targets[0].package}\``,
+        `- **Bump:** \`${targets[0].current || '?'}\` → \`${targets[0].fixed}\``,
+        `- **Severity:** ${targets[0].severity}`,
+        `- **Major version bump:** ${targets[0].isMajorBump ? 'yes' : 'no'}`,
+        targets[0].advisoryUrl ? `- **Advisory:** ${targets[0].advisoryUrl}` : null,
+      ];
   return [
-    `## AutoSec dependency bump`,
-    ``,
-    `- **Package:** \`${vuln.package}\``,
-    `- **Bump:** \`${vuln.current || '?'}\` → \`${vuln.fixed}\``,
-    `- **Severity:** ${vuln.severity}`,
-    `- **Major version bump:** ${vuln.isMajorBump ? 'yes' : 'no'}`,
-    vuln.advisoryUrl ? `- **Advisory:** ${vuln.advisoryUrl}` : null,
+    ...bumpHeader,
     repoLink ? `- **Upstream:** ${repoLink}` : null,
     ``,
     `### Migration notes (from agent)`,
@@ -105,9 +136,11 @@ function renderBody({ vuln, ctx, summary, testResult, baselineResult, verdict })
     ``,
     (summary?.files_touched || []).map((f) => `- \`${f}\``).join('\n') || '(see diff)',
     ``,
-    `### Changelog source`,
+    `### Changelog sources`,
     ``,
-    `${ctx.changelog.source} — ${ctx.changelog.notes}`,
+    (contexts || [ctx]).filter(Boolean).map((c, i) =>
+      `- \`${targets[i]?.package || '?'}\`: ${c.changelog.source} — ${c.changelog.notes}`
+    ).join('\n'),
     ``,
     `### Test results`,
     ``,
